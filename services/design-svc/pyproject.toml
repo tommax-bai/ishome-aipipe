@@ -9,10 +9,16 @@ dependencies = [
   "temporalio>=1.8",
   "pydantic>=2.9",
   "patch-engine",
+  "grpcio>=1.66",
+  "python-ulid>=2.7",
 ]
 
+# 纵切入口：`uv run design-grpc` 启动 DesignService gRPC 服务端（grpc_server.py）
+[project.scripts]
+design-grpc = "design.grpc_server:main"
+
 [tool.uv.sources]
-ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.1.2", subdirectory = "gen/python" }
+ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }
 patch-engine = { workspace = true }
 
 [build-system]

@@ -20,6 +20,9 @@ ALLOWED_VERTICAL_FILES = {
     "workflows.py",
     "activities.py",
     "worker.py",
+    # 2026-08-23 纵切评审通过的入站/出站边缘（import-linter 有对应方向契约）：
+    "grpc_server.py",  # gRPC 入站适配，与 router 同级（contracts DesignService 服务端）
+    "channel_client.py",  # 出站边缘：channel-svc gRPC 客户端（只依赖 contracts 生成代码）
 }
 
 

@@ -53,6 +53,8 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 [tool.mypy]
 strict = true
 python_version = "3.12"
+# contracts 生成代码（*_pb2_grpc.py 无存根）定向豁免 untyped-call 检查；不许全局放水
+untyped_calls_exclude = ["ishome"]
 files = [
   "services/genpipe-svc/src",
   "services/genpipe-worker/src",
@@ -62,6 +64,11 @@ files = [
   "packages/patch-engine/src",
   "tests",
 ]
+
+# grpcio 不带 py.typed（grpc.aio 经由 Any）；定向忽略，勿扩大范围
+[[tool.mypy.overrides]]
+module = ["grpc", "grpc.*"]
+ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
 # pytest
@@ -97,8 +104,11 @@ forbidden_modules = [
   "design.repo",
   "design.service",
   "design.router",
+  "design.grpc_server",
+  "design.channel_client",
   "genpipe_worker",
   "fastapi",
+  "grpc",
 ]
 
 [[tool.importlinter.contracts]]
@@ -123,7 +133,14 @@ forbidden_modules = ["genpipe.repo", "genpipe.router", "genpipe.workflows", "gen
 name = "跨 domain 数据属主唯一：genpipe 禁触 design 内部（只许经对方 service）"
 type = "forbidden"
 source_modules = ["genpipe"]
-forbidden_modules = ["design.repo", "design.router", "design.workflows", "genpipe_worker"]
+forbidden_modules = [
+  "design.repo",
+  "design.router",
+  "design.workflows",
+  "design.grpc_server",
+  "design.channel_client",
+  "genpipe_worker",
+]
 
 [[tool.importlinter.contracts]]
 name = "跨 domain 数据属主唯一：genpipe_worker 禁触 svc 内部"
@@ -136,6 +153,30 @@ forbidden_modules = [
   "design.repo",
   "design.router",
   "design.workflows",
+  "design.grpc_server",
+  "design.channel_client",
+]
+
+[[tool.importlinter.contracts]]
+name = "design 入站边缘 grpc_server → service 单向：禁直接越层触 repo / workflows"
+type = "forbidden"
+source_modules = ["design.grpc_server"]
+forbidden_modules = ["design.repo", "design.workflows", "fastapi"]
+# 只禁直接 import（经 service 的传递依赖是分层的正常形态）
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "design 出站边缘 channel_client 不感知上层：只依赖 contracts 生成代码与运行库"
+type = "forbidden"
+source_modules = ["design.channel_client"]
+forbidden_modules = [
+  "design.service",
+  "design.router",
+  "design.grpc_server",
+  "design.repo",
+  "design.workflows",
+  "design.models",
+  "fastapi",
 ]
 
 [[tool.importlinter.contracts]]
