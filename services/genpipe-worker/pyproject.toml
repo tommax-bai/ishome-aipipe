@@ -1,7 +1,7 @@
 [project]
 name = "genpipe-worker"
 version = "0.1.0"
-description = "生成/打分/合规检测/母版绘制/场景编译/渲染 activities（弹性伸缩轴独立）"
+description = "非绘图 activities：解析/求解/校验/门禁（V1.4 绘图 activity 已迁出至 render2d/imagegen/render3d 三仓）"
 requires-python = ">=3.12"
 dependencies = [
   "ishome-contracts",
@@ -10,6 +10,10 @@ dependencies = [
   "adapters",
   "scoring",
 ]
+
+# 纵切入口：`uv run genpipe-worker` 启动 activity worker（监听 genpipe-activities）
+[project.scripts]
+genpipe-worker = "genpipe_worker.worker:main"
 
 [tool.uv.sources]
 ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }

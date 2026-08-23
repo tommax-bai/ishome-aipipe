@@ -11,6 +11,10 @@ dependencies = [
   "scoring",
 ]
 
+# 纵切入口：`uv run genpipe-workflow-worker` 启动 workflow worker（监听 genpipe-workflows）
+[project.scripts]
+genpipe-workflow-worker = "genpipe.worker:main"
+
 [tool.uv.sources]
 ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }
 scoring = { workspace = true }

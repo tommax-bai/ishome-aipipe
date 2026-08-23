@@ -1,8 +1,8 @@
-"""worker 进程装配：真连 Temporal（namespace: genpipe）并注册本仓全部 activities。
+"""workflow worker 进程装配：真连 Temporal（namespace: genpipe）并注册本服务 workflow。
 
-监听队列 `genpipe-activities`（contracts `registries/task_queues.md`）；重试/心跳/
-取消/背压沿用 Temporal activity 原生语义，不引入服务间 HTTP 调用（对齐文档 §3.1）。
-优雅停止：SIGINT / SIGTERM 触发 worker graceful shutdown（等待在飞 activity 收尾）。
+监听 workflow 专属队列 `genpipe-workflows`（服务内约定，非跨服务契约）；activity
+执行不在本进程——workflow 按 contracts `registries/task_queues.md` 把 activity 派往
+genpipe-worker 与三个绘图服务各自的队列。优雅停止：SIGINT / SIGTERM。
 """
 
 from __future__ import annotations
@@ -12,12 +12,12 @@ import os
 import signal
 
 from temporalio.client import Client
+from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
-from genpipe_worker.activities import ACTIVITY_REGISTRY
+from genpipe.workflows import WORKFLOW_TASK_QUEUE, GenBatchWorkflow, GenerationTaskWorkflow
 
 GENPIPE_NAMESPACE = "genpipe"
-GENPIPE_TASK_QUEUE = "genpipe-activities"
 
 
 def temporal_address() -> str:
@@ -32,11 +32,12 @@ async def run_worker(address: str | None = None, namespace: str | None = None) -
     client = await Client.connect(
         address or temporal_address(),
         namespace=namespace or temporal_namespace(),
+        data_converter=pydantic_data_converter,
     )
     worker = Worker(
         client,
-        task_queue=GENPIPE_TASK_QUEUE,
-        activities=list(ACTIVITY_REGISTRY.values()),
+        task_queue=WORKFLOW_TASK_QUEUE,
+        workflows=[GenBatchWorkflow, GenerationTaskWorkflow],
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -51,5 +52,5 @@ async def run_worker(address: str | None = None, namespace: str | None = None) -
 
 
 def main() -> None:
-    """入口脚本 `genpipe-worker`（pyproject [project.scripts]）。"""
+    """入口脚本 `genpipe-workflow-worker`（pyproject [project.scripts]）。"""
     asyncio.run(run_worker())
