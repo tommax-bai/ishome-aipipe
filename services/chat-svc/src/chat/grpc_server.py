@@ -95,12 +95,13 @@ def build_server(
 
 async def serve() -> None:
     port = int(os.environ.get("CHAT_GRPC_PORT", DEFAULT_CHAT_GRPC_PORT))
+    bind = os.environ.get("CHAT_GRPC_BIND", "0.0.0.0")
     channel_target = os.environ.get("CHANNEL_GRPC_TARGET", DEFAULT_CHANNEL_GRPC_TARGET)
     llm = LiteLlmClient()
     async with ChannelClient(channel_target) as channel_client:
         try:
             server = build_server(channel_client, llm, channel_client)
-            server.add_insecure_port(f"0.0.0.0:{port}")
+            server.add_insecure_port(f"{bind}:{port}")
             await server.start()
             logger.info(
                 "chat-svc gRPC listening on :%d, channel target %s, llm gateway %s",
