@@ -61,3 +61,7 @@ UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple uv sync --all-packages
 ```
 
 CI（GitHub Actions）在境外 runner 上直连官方 index，无需镜像。
+
+## 本地质量门（pre-push）
+
+云端 CI 停用期间的本地把关：push 前自动跑本仓全套检查。新 clone 后执行一次 `git config core.hooksPath .githooks` 启用；紧急绕过用 `git push --no-verify`。
