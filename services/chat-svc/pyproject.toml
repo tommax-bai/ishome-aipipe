@@ -11,12 +11,18 @@ dependencies = [
   "grpcio>=1.66",
   "python-ulid>=2.7",
   "httpx>=0.27",
+  # 会话存储 PG 后端 + 迁移执行器（psycopg3 直写 SQL，禁 ORM；无 PG 场景走内存后端，不触库）
+  "psycopg[binary]>=3.2",
+  "psycopg-pool>=3.2",
 ]
 
-# 纵切入口：`uv run chat-grpc` 启动 DesignService gRPC 服务端（grpc_server.py；
-# 契约入口沿用 contracts design.v1——V1.5 更名不动跨仓契约）
+# 纵切入口：
+# - `uv run chat-grpc` 启动 DesignService gRPC 服务端（grpc_server.py；
+#   契约入口沿用 contracts design.v1——V1.5 更名不动跨仓契约）
+# - `uv run chat-migrate` 应用 svc_chat 纯 SQL 迁移（migrations/，需 CHAT_DATABASE_URL）
 [project.scripts]
 chat-grpc = "chat.grpc_server:main"
+chat-migrate = "chat.migrate:main"
 
 [tool.uv.sources]
 ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }

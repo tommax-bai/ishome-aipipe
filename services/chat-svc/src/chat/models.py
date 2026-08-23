@@ -6,6 +6,7 @@ Agent 方案 §8 逐字一致，禁止同义变体（如裸 confirmed）。
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from patch_engine.ops import PatchOp as PatchOp  # 领域内可直接引用（re-export）
@@ -22,11 +23,51 @@ FactKind = Literal["dimensional", "structural"]
 ProjectPhase = Literal["preliminary", "deep"]
 
 
+class ConversationRef(BaseModel):
+    """会话定位三元组（渠道类型/渠道实例/渠道侧用户）——svc_chat.conversations 的自然键。
+
+    TODO(identity)：identity 归一后改为渠道无关 user_id 键控（对齐 §6.5）。
+    """
+
+    channel_type: int
+    channel_instance: str
+    external_user_id: str
+
+    @property
+    def key(self) -> str:
+        """进程内会话键（内存实现与会话态缓存的字典键）。"""
+        return f"{self.channel_type}:{self.channel_instance}:{self.external_user_id}"
+
+
 class ConversationTurn(BaseModel):
-    """会话历史一轮（LLM 上下文用，有界保留；持久化归 svc_chat 落库后）。"""
+    """会话历史一轮（LLM 上下文用，有界保留）。
+
+    上下文历史是会话态（Redis 接入位见 repo.SessionCache）；消息原文的持久化
+    单位是 ChatMessage → svc_chat.messages，两者职责不同不合并。
+    """
 
     role: Literal["user", "assistant"]
     text: str
+
+
+MessageDirection = Literal["inbound", "outbound"]
+"""消息方向：入站（用户→系统）/出站（系统→用户）。"""
+
+
+class ChatMessage(BaseModel):
+    """会话消息原文（svc_chat.messages 的领域形态，渠道协议无关）。"""
+
+    external_message_id: str
+    """UnifiedMessage.message_id：入站=渠道消息 id，出站=本服务生成 ULID。"""
+    direction: MessageDirection
+    content_type: str
+    """text / quick_reply / image / audio / card / unknown（proto oneof 名原样）。"""
+    text: str
+    """消息原文文本；非文本内容存归一化占位文本（与 LLM 上下文一致）。"""
+    idempotency_key: str
+    """防重存幂等键：入站=渠道消息 id；出站=派生键 reply-{入站id}-{seq}。"""
+    occurred_at: datetime | None = None
+    """渠道侧发生时间（UTC；渠道未给则空，落库时间以 created_at 为准）。"""
 
 
 class Fact(BaseModel):

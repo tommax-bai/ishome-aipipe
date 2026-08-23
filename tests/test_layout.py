@@ -27,7 +27,13 @@ ALLOWED_VERTICAL_FILES = {
     "llm_client.py",  # 出站边缘：LiteLLM 网关客户端（任务级逻辑模型名，物理映射在 infra）
     "intent.py",  # 服务层助手：Intent Router（§5.2），只依赖 models 与协议位
     "orchestrator.py",  # 服务层助手：Design Orchestrator（§5.1），只依赖 models 与协议位
+    # 2026-08-23 会话存储落库评审通过：
+    "migrate.py",  # 迁移执行器边缘（chat-migrate 入口，纯 SQL 迁移；import-linter 契约禁触上层）
 }
+
+# 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：
+# memory 默认 / pg 按 CHAT_DATABASE_URL 启用）；子包内模块方向由 import-linter 锁定。
+ALLOWED_VERTICAL_PACKAGES = {"repo"}
 
 
 def _source_dirs() -> list[Path]:
@@ -47,11 +53,18 @@ def test_no_dumping_ground_directories() -> None:
 
 
 def test_services_keep_vertical_slice_shape() -> None:
-    """services 的 domain 包顶层只允许纵切六件套文件（新增横层文件先过评审）。"""
+    """services 的 domain 包顶层只允许纵切六件套文件/子包（新增横层先过评审）。"""
     offenders: list[Path] = []
     for src in [p for p in REPO_ROOT.glob("services/*/src")]:
         for domain_dir in [d for d in src.iterdir() if d.is_dir()]:
             for py in domain_dir.glob("*.py"):
                 if py.name not in ALLOWED_VERTICAL_FILES:
                     offenders.append(py)
-    assert not offenders, f"纵切形态外的顶层文件：{offenders}"
+            for sub in domain_dir.iterdir():
+                if (
+                    sub.is_dir()
+                    and sub.name != "__pycache__"
+                    and sub.name not in ALLOWED_VERTICAL_PACKAGES
+                ):
+                    offenders.append(sub)
+    assert not offenders, f"纵切形态外的顶层文件/目录：{offenders}"

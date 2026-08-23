@@ -19,7 +19,7 @@ tests/              # 工作区级守门测试（activity 注册名一致性、�
 
 ## 分层与 import 契约（规范文档 §1.3，import-linter 真实生效，违规挂流水线）
 
-- 纵切文件形态：`router.py / service.py / repo.py / models.py / workflows.py / activities.py`
+- 纵切文件形态：`router.py / service.py / repo.py / models.py / workflows.py / activities.py`（纵切件可评审拆为同名子包——chat 的 `repo/` 已拆 memory/pg 双实现）
 - `workflows.py` 只编排禁 IO（只许 import models 与 activity 注册名）——Temporal 可重放硬约束
 - `router → service → repo` 单向；跨 domain 只许 import 对方 `service`
 - `packages/*` 禁止反向依赖 `services/*`
@@ -29,6 +29,16 @@ tests/              # 工作区级守门测试（activity 注册名一致性、�
 
 - **Temporal 收缩至任务层**（V1.5 裁决）：仅 `genpipe` namespace（生成管线 workflow/activity，重试/心跳/超时用原生语义）。原"设计项目=长周期 Temporal workflow（continue-as-new）"方案作废——里程碑真相在表 + 事件驱动 checkCompletion（project-svc）。
 - **activity 注册名只增不改**，唯一真源 ishome-contracts `activities/registry.md`；本仓 `tests/test_activity_registry.py` 与其保持逐字一致。
+
+## chat-svc 会话存储（svc_chat）
+
+- 迁移：`CHAT_DATABASE_URL=postgresql://... uv run chat-migrate`——纯 SQL 迁移在
+  `services/chat-svc/migrations/`（`V{n}__` 命名），`schema_migrations` 记账、按序幂等，无重型框架。
+- 运行：`CHAT_DATABASE_URL` 设置时消息原文（入站+出站）落 PG schema `svc_chat`；未设时内存后端
+  （backend 的 e2e-mock-smoke 裸起 chat-grpc 即此路径）。会话态（项目快照/上下文历史）为进程内
+  缓存，Redis 接入位在 `chat.repo.memory.SessionCache`。
+- 红线：槽位真相唯一在 `svc_project.slots`（project-svc 属主），svc_chat 永不落槽位真相；
+  `episodic_memories` 待 pgvector 基础镜像切换后 V2 建表（见 V1 迁移头注）。
 
 ## 常用命令
 

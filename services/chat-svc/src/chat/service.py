@@ -1,8 +1,13 @@
 """用例层：设计会话编排入口（Design Orchestrator v1 已接入）。
 
-流程：幂等去重 → 输入归一化（v1：quick_reply 直通；TODO(normalize) 多消息聚合、
-语音转文字）→ Intent Router → Orchestrator（事实抽取 + 回复）→ 确认闭环
-（最小必要输入集齐 → 文本版确认清单 → user_confirmed 升级）→ 出站回话。
+流程：入站落存（svc_chat.messages，幂等键防重存兼去重门）→ 输入归一化
+（v1：quick_reply 直通；TODO(normalize) 多消息聚合、语音转文字）→ Intent Router
+→ Orchestrator（事实抽取 + 回复）→ 确认闭环（最小必要输入集齐 → 文本版确认
+清单 → user_confirmed 升级）→ 出站回话（发送后落存出站原文）。
+
+存储：`CHAT_DATABASE_URL` 设置时消息原文落 PG（schema svc_chat），未设时内存
+（e2e-mock-smoke 裸起可跑）——选择在 repo 层，本层不感知。会话态（项目快照/
+上下文历史）为进程内缓存，Redis 接入位在 repo.SessionCache。
 
 - LLM 一律经 LiteLLM 网关（llm_client），业务只引用任务级逻辑模型名；
 - 结构类红线（§8.3）：口述结构信息永不进入可确认集合，回复附两条路径说明；
@@ -15,6 +20,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Protocol
 
 from ishome.channel.v1 import message_pb2
@@ -22,13 +28,14 @@ from ulid import ULID
 
 from chat import intent as intent_router
 from chat import orchestrator
-from chat.models import ConversationTurn, ProjectState
+from chat.models import ChatMessage, ConversationRef, ConversationTurn, ProjectState
 from chat.repo import (
     append_history,
     find_or_create_project,
     find_project,
     get_history,
-    mark_message_seen,
+    record_inbound,
+    record_outbound,
     save_project,
 )
 
@@ -68,7 +75,9 @@ async def ingest_message(
     capability: CapabilityLookup | None = None,
 ) -> str:
     """会话入站处理；返回入站 message_id。"""
-    if not await mark_message_seen(inbound.message_id):
+    conversation = _conversation_ref(inbound)
+    # 入站原文落存即幂等门：幂等键（=渠道消息 id）已存过说明是渠道重投，跳过
+    if not await record_inbound(conversation, _inbound_message(inbound)):
         logger.info("duplicate inbound skipped: message_id=%s", inbound.message_id)
         return inbound.message_id
 
@@ -79,42 +88,40 @@ async def ingest_message(
         inbound.channel_instance,
         inbound.WhichOneof("content"),
     )
-    conversation_key = (
-        f"{inbound.channel_type}:{inbound.channel_instance}:"
-        f"{inbound.external_user_id or inbound.user_id}"
-    )
-    project = await find_or_create_project(conversation_key)
+    project = await find_or_create_project(conversation)
     user_text = _inbound_text(inbound)
 
     try:
         reply_texts, quick_reply_checklist = await _converse(
-            inbound, project, conversation_key, user_text, llm, capability
+            inbound, project, conversation, user_text, llm, capability
         )
     except Exception:
         logger.exception("conversation turn failed: message_id=%s", inbound.message_id)
         reply_texts, quick_reply_checklist = [FALLBACK_REPLY], None
 
-    await append_history(conversation_key, ConversationTurn(role="user", text=user_text))
+    await append_history(conversation, ConversationTurn(role="user", text=user_text))
     outbounds = [_text_reply(inbound, text) for text in reply_texts]
     if quick_reply_checklist is not None:
         outbounds.append(_quick_reply_checklist(inbound, quick_reply_checklist))
     for seq, outbound in enumerate(outbounds):
         # 幂等键从入站消息派生：同一入站消息的回话重试不会在聊天线程里发两遍
-        await sender.send(outbound, idempotency_key=f"reply-{inbound.message_id}-{seq}")
+        idempotency_key = f"reply-{inbound.message_id}-{seq}"
+        await sender.send(outbound, idempotency_key=idempotency_key)
+        await record_outbound(conversation, _outbound_message(outbound, idempotency_key))
         await append_history(
-            conversation_key, ConversationTurn(role="assistant", text=_outbound_text(outbound))
+            conversation, ConversationTurn(role="assistant", text=_outbound_text(outbound))
         )
         logger.info(
             "reply sent: message_id=%s in_reply_to=%s", outbound.message_id, inbound.message_id
         )
-    await save_project(conversation_key, project)
+    await save_project(conversation, project)
     return inbound.message_id
 
 
 async def _converse(
     inbound: message_pb2.UnifiedMessage,
     project: ProjectState,
-    conversation_key: str,
+    conversation: ConversationRef,
     user_text: str,
     llm: LlmCompletion,
     capability: CapabilityLookup | None,
@@ -128,7 +135,7 @@ async def _converse(
         logger.info("checklist confirmed: project=%s upgraded=%d", project.project_id, upgraded)
         return [orchestrator.confirm_ack_text()], None
 
-    turn = await orchestrator.step(llm, project, await get_history(conversation_key), user_text)
+    turn = await orchestrator.step(llm, project, await get_history(conversation), user_text)
     structural = orchestrator.merge_facts(project, turn.facts)
     # 修正已确认信息 → 撤下确认标记，走重新确认回路
     if project.minimum_inputs_confirmed and any(
@@ -184,6 +191,45 @@ async def _supports_quick_reply(
         # 能力查询失败按不支持降级（纯文本清单照发，流程不断）
         logger.warning("capability lookup failed, degrade to text checklist", exc_info=True)
         return False
+
+
+def _conversation_ref(inbound: message_pb2.UnifiedMessage) -> ConversationRef:
+    # TODO(identity)：identity 归一后改为渠道无关 user_id 键控（对齐 §6.5）
+    return ConversationRef(
+        channel_type=inbound.channel_type,
+        channel_instance=inbound.channel_instance,
+        external_user_id=inbound.external_user_id or inbound.user_id,
+    )
+
+
+def _inbound_message(inbound: message_pb2.UnifiedMessage) -> ChatMessage:
+    """入站原文的持久化形态；幂等键 = 渠道消息 id（渠道重投防重存）。"""
+    return ChatMessage(
+        external_message_id=inbound.message_id,
+        direction="inbound",
+        content_type=inbound.WhichOneof("content") or "unknown",
+        text=_inbound_text(inbound),
+        idempotency_key=inbound.message_id,
+        occurred_at=_occurred_at(inbound),
+    )
+
+
+def _outbound_message(outbound: message_pb2.UnifiedMessage, idempotency_key: str) -> ChatMessage:
+    """出站原文的持久化形态；幂等键与发送键同源（重试重放不重存）。"""
+    return ChatMessage(
+        external_message_id=outbound.message_id,
+        direction="outbound",
+        content_type=outbound.WhichOneof("content") or "unknown",
+        text=_outbound_text(outbound),
+        idempotency_key=idempotency_key,
+        occurred_at=_occurred_at(outbound),
+    )
+
+
+def _occurred_at(message: message_pb2.UnifiedMessage) -> datetime | None:
+    if not message.HasField("occurred_at"):
+        return None
+    return message.occurred_at.ToDatetime(tzinfo=UTC)
 
 
 def _inbound_text(inbound: message_pb2.UnifiedMessage) -> str:

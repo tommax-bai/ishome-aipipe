@@ -16,7 +16,7 @@ import sys
 
 from chat import service
 from chat.llm_client import LiteLlmClient
-from chat.repo import reset_conversations, reset_seen_messages
+from chat.repo import reset_conversations, reset_messages
 from ishome.channel.v1 import message_pb2
 from ishome.common.v1 import channel_type_pb2
 
@@ -43,7 +43,7 @@ class PrintingSender:
 
 
 async def main() -> int:
-    reset_seen_messages()
+    reset_messages()
     reset_conversations()
     llm = LiteLlmClient()
     sender = PrintingSender()

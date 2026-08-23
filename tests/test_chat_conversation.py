@@ -17,7 +17,9 @@ from chat import orchestrator, service
 from chat.channel_client import ChannelClient
 from chat.grpc_server import build_server
 from chat.intent import parse_intent, route_intent
-from chat.repo import find_or_create_project, reset_conversations, reset_seen_messages
+from chat.models import ConversationRef
+from chat.repo import active_store, find_or_create_project, reset_conversations, reset_messages
+from chat.repo.memory import MemoryChatStore
 from ishome.channel.v1 import message_pb2
 from ishome.channel.v1 import service_pb2 as channel_service_pb2
 from ishome.channel.v1 import service_pb2_grpc as channel_service_pb2_grpc
@@ -151,13 +153,17 @@ def make_inbound(
     return msg
 
 
-def conversation_key() -> str:
-    return f"{channel_type_pb2.CHANNEL_TYPE_MOCK}:{MOCK_INSTANCE}:{USER}"
+def conversation_ref() -> ConversationRef:
+    return ConversationRef(
+        channel_type=channel_type_pb2.CHANNEL_TYPE_MOCK,
+        channel_instance=MOCK_INSTANCE,
+        external_user_id=USER,
+    )
 
 
 @pytest.fixture(autouse=True)
 def _isolate() -> None:
-    reset_seen_messages()
+    reset_messages()
     reset_conversations()
 
 
@@ -200,7 +206,7 @@ async def test_fact_extraction_and_cognitive_states() -> None:
         ],
     )
     await service.ingest_message(make_inbound("我家在翠湖天地"), sender, llm)
-    project = await find_or_create_project(conversation_key())
+    project = await find_or_create_project(conversation_ref())
     states = {(f.target_id, f.property): f.cognitive_state for f in project.base_facts.facts}
     assert states[("floorplan", "estate_name")] == "observed"
     assert states[("scale-anchor", "entry_door_width")] == "inferred"
@@ -251,7 +257,7 @@ async def test_structural_facts_never_confirmable() -> None:
         sender,
         llm,
     )
-    project = await find_or_create_project(conversation_key())
+    project = await find_or_create_project(conversation_ref())
     structural = [f for f in project.base_facts.facts if f.fact_kind == "structural"]
     assert structural and all(f.cognitive_state != "user_confirmed" for f in structural)
     dimensional = [f for f in project.base_facts.facts if f.fact_kind == "dimensional"]
@@ -275,7 +281,7 @@ async def test_checklist_quick_reply_when_supported() -> None:
     assert "约900mm" in checklist.quick_reply.prompt_text  # inferred 值带"约"（§8.1）
     option_ids = [o.option_id for o in checklist.quick_reply.options]
     assert option_ids == [orchestrator.CONFIRM_OPTION_ID, orchestrator.CORRECT_OPTION_ID]
-    project = await find_or_create_project(conversation_key())
+    project = await find_or_create_project(conversation_ref())
     assert project.open_confirmation_ids
 
 
@@ -305,7 +311,7 @@ async def test_confirm_upgrades_to_user_confirmed() -> None:
     await service.ingest_message(make_inbound("确认", "in-c2"), sender, llm)
     ack = sender.sent[-1].text.text
     assert ack.startswith(orchestrator.CONFIRM_ACK_MARKER)
-    project = await find_or_create_project(conversation_key())
+    project = await find_or_create_project(conversation_ref())
     assert project.minimum_inputs_confirmed
     assert not project.open_confirmation_ids
     assert all(
@@ -332,7 +338,7 @@ async def test_correction_reopens_checklist() -> None:
     checklist = sender.sent[-1].text.text
     assert checklist.startswith(orchestrator.CHECKLIST_MARKER)
     assert "四口之家" in checklist
-    project = await find_or_create_project(conversation_key())
+    project = await find_or_create_project(conversation_ref())
     assert not project.minimum_inputs_confirmed
     assert project.open_confirmation_ids
 
@@ -356,6 +362,25 @@ async def test_llm_failure_sends_fallback() -> None:
     await service.ingest_message(make_inbound("你好", "in-broken"), sender, BrokenLlm())
     assert len(sender.sent) == 1
     assert sender.sent[0].text.text == service.FALLBACK_REPLY
+
+
+# --- 消息原文落存（IngestMessage 链路，入站与出站都存） ---
+
+
+@pytest.mark.asyncio
+async def test_messages_recorded_inbound_and_outbound() -> None:
+    sender = CapturingSender()
+    llm = FakeLlm(intents=[intent_json("other")], turns=[turn_json([], "你好呀。")])
+    await service.ingest_message(make_inbound("你好", "in-store"), sender, llm)
+    store = active_store()
+    assert isinstance(store, MemoryChatStore)
+    records = store.list_messages(conversation_ref())
+    assert [(m.direction, m.content_type, m.text) for m in records] == [
+        ("inbound", "text", "你好"),
+        ("outbound", "text", "你好呀。"),
+    ]
+    assert records[0].idempotency_key == "in-store"  # 入站幂等键 = 渠道消息 id
+    assert records[1].idempotency_key == "reply-in-store-0"  # 出站幂等键与发送键同源
 
 
 # --- gRPC 全链路（进程内） ---

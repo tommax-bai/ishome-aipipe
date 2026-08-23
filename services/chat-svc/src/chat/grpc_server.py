@@ -5,6 +5,9 @@
 - 入站 → service 单向（import-linter 锁定，禁越层触 repo）；
 - 联调契约：本服务默认监听 :9101（env `CHAT_GRPC_PORT`），出站回话经
   channel-svc gRPC（env `CHANNEL_GRPC_TARGET`，默认 localhost:9102）；
+- 存储：env `CHAT_DATABASE_URL` 设置时会话消息落 PG（schema svc_chat，先跑
+  `uv run chat-migrate` 建表），未设时内存（e2e-mock-smoke 裸起可跑）——
+  后端选择在 repo 层，此处零装配；
 - 启动方式：`uv run chat-grpc`。
 """
 
