@@ -1,0 +1,16 @@
+[project]
+name = "{{ domain_name | replace('_', '-') }}{% if service_kind == 'svc' %}-svc{% else %}-worker{% endif %}"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+{% if service_kind == 'svc' %}  "fastapi>=0.115",
+{% endif %}  "temporalio>=1.8",
+  "pydantic>=2.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{ domain_name }}"]

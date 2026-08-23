@@ -1,0 +1,13 @@
+[project]
+name = "patch-engine"
+version = "0.1.0"
+description = "结构化 Patch 的操作模型与机械校验（几何/规则校验在 genpipe activity 侧）"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.9"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/patch_engine"]

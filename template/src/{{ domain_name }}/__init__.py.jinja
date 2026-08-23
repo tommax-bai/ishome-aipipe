@@ -1,0 +1,9 @@
+"""{{ domain_name }} 域。
+
+分层契约（import-linter 锁定，规范 §1.3）：
+- router → service → repo 单向；models 为最底层；
+- workflows 只编排禁 IO（只许 import models 与 activity 注册名）；
+- 跨 domain 只许 import 对方 service；
+- 禁 utils/common/helpers 目录。
+新 domain 落地后：把包名加进根 pyproject 的 [tool.importlinter].root_packages。
+"""

@@ -1,0 +1,13 @@
+# 新 domain 纵切脚手架——"分层靠模板生成，不靠人记"（规范 §七）。
+# 用法：uvx copier copy template/ services/<新服务名>/ （或在 uv sync 后 uv run copier copy）
+domain_name:
+  type: str
+  help: "领域包名（snake_case，如 estate_sync；即 src/ 下的包目录名）"
+  validator: "{% if not domain_name.isidentifier() %}必须是合法 Python 标识符（snake_case）{% endif %}"
+service_kind:
+  type: str
+  help: "服务形态：svc（FastAPI 入站 + workflow 编排）或 worker（activity 执行）"
+  choices:
+    - svc
+    - worker
+  default: svc

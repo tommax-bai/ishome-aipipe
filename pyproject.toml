@@ -1,0 +1,145 @@
+[project]
+name = "ishome-aipipe"
+version = "0.0.0"
+description = "《是我的家》生成域 monorepo：genpipe-svc / genpipe-worker / design-svc + packages（uv workspace 虚根）"
+requires-python = ">=3.12"
+dependencies = [
+  "genpipe-svc",
+  "genpipe-worker",
+  "design-svc",
+  "scoring",
+  "adapters",
+  "patch-engine",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["services/*", "packages/*"]
+
+[tool.uv.sources]
+genpipe-svc = { workspace = true }
+genpipe-worker = { workspace = true }
+design-svc = { workspace = true }
+scoring = { workspace = true }
+adapters = { workspace = true }
+patch-engine = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "import-linter>=2.1",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "copier>=9.4",
+]
+
+# ---------------------------------------------------------------------------
+# ruff（lint + format）
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["template"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+# ---------------------------------------------------------------------------
+# mypy（strict）
+# ---------------------------------------------------------------------------
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = [
+  "services/genpipe-svc/src",
+  "services/genpipe-worker/src",
+  "services/design-svc/src",
+  "packages/scoring/src",
+  "packages/adapters/src",
+  "packages/patch-engine/src",
+  "tests",
+]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+# ---------------------------------------------------------------------------
+# import-linter：模块依赖方向契约（违规挂流水线）。
+# 规则来源：《开发规范与代码分层》§1.3；目录白名单（禁 utils/common/helpers）
+# 由 tests/test_layout.py 结构测试执行。
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_packages = [
+  "genpipe",
+  "genpipe_worker",
+  "design",
+  "scoring",
+  "adapters",
+  "patch_engine",
+]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "workflows 无 IO：只许依赖 models 与 activity 注册名（Temporal 可重放硬约束，非风格偏好）"
+type = "forbidden"
+source_modules = ["genpipe.workflows", "design.workflows"]
+forbidden_modules = [
+  "genpipe.repo",
+  "genpipe.service",
+  "genpipe.router",
+  "design.repo",
+  "design.service",
+  "design.router",
+  "genpipe_worker",
+  "fastapi",
+]
+
+[[tool.importlinter.contracts]]
+name = "领域纵切内 router → service → repo → models 单向"
+type = "layers"
+layers = ["router", "service", "repo", "models"]
+containers = ["genpipe", "design"]
+
+[[tool.importlinter.contracts]]
+name = "worker 内 worker → activities → models 单向"
+type = "layers"
+layers = ["worker", "activities", "models"]
+containers = ["genpipe_worker"]
+
+[[tool.importlinter.contracts]]
+name = "跨 domain 数据属主唯一：design 禁触 genpipe 内部（只许经对方 service）"
+type = "forbidden"
+source_modules = ["design"]
+forbidden_modules = ["genpipe.repo", "genpipe.router", "genpipe.workflows", "genpipe_worker"]
+
+[[tool.importlinter.contracts]]
+name = "跨 domain 数据属主唯一：genpipe 禁触 design 内部（只许经对方 service）"
+type = "forbidden"
+source_modules = ["genpipe"]
+forbidden_modules = ["design.repo", "design.router", "design.workflows", "genpipe_worker"]
+
+[[tool.importlinter.contracts]]
+name = "跨 domain 数据属主唯一：genpipe_worker 禁触 svc 内部"
+type = "forbidden"
+source_modules = ["genpipe_worker"]
+forbidden_modules = [
+  "genpipe.repo",
+  "genpipe.router",
+  "genpipe.workflows",
+  "design.repo",
+  "design.router",
+  "design.workflows",
+]
+
+[[tool.importlinter.contracts]]
+name = "packages 不感知使用者：库禁止反向依赖 services"
+type = "forbidden"
+source_modules = ["scoring", "adapters", "patch_engine"]
+forbidden_modules = ["genpipe", "genpipe_worker", "design"]
