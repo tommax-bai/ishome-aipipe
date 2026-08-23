@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
 from ishome.channel.v1 import message_pb2
@@ -15,6 +16,8 @@ from ulid import ULID
 
 from design.models import ProjectState
 from design.repo import find_project, mark_message_seen
+
+logger = logging.getLogger(__name__)
 
 REPLY_PREFIX = "[design-svc] 收到你的消息："
 """回话前缀：纵切 E2E 断言依据（联调契约钉死，改动需与 channel-svc E2E 同步）。"""
@@ -46,8 +49,16 @@ async def ingest_message(inbound: message_pb2.UnifiedMessage, sender: OutboundSe
     """
     if not await mark_message_seen(inbound.message_id):
         # 幂等：同一入站消息重复投递不重复回话
+        logger.info("duplicate inbound skipped: message_id=%s", inbound.message_id)
         return inbound.message_id
 
+    logger.info(
+        "inbound message: message_id=%s channel=%s/%s content=%s",
+        inbound.message_id,
+        inbound.channel_type,
+        inbound.channel_instance,
+        inbound.WhichOneof("content"),
+    )
     reply = message_pb2.UnifiedMessage(
         message_id=str(ULID()),
         channel_type=inbound.channel_type,
@@ -60,6 +71,7 @@ async def ingest_message(inbound: message_pb2.UnifiedMessage, sender: OutboundSe
     reply.occurred_at.GetCurrentTime()
     # 幂等键从入站消息派生：同一入站消息的回话重试不会在聊天线程里发两遍
     await sender.send(reply, idempotency_key=f"reply-{inbound.message_id}")
+    logger.info("reply sent: message_id=%s in_reply_to=%s", reply.message_id, inbound.message_id)
     return inbound.message_id
 
 
