@@ -1,15 +1,16 @@
-"""存取层：ProjectState 持久化（Postgres schema `svc_design`，禁止跨 schema join）。
+"""存取层：会话态与项目快照持久化（Postgres schema `svc_chat`，禁止跨 schema join）。
 
-表结构见对齐文档 §5.1：projects / project_revisions / facts / decisions /
-scenes / artifacts / open_questions / outbox（本地事务 + outbox 发事件）。
-骨架阶段无真实存储实现；ORM 类命名规则：`ProjectStateRecord`（Record 后缀）。
+V1.5：原 `svc_design` 设计作废，拆为 `svc_project`（project-svc 属主，
+slot/artifact/task/revision 唯一真相）+ `svc_chat`（本服务：会话、记忆、
+承诺区，表结构见对齐文档 §5.1）。骨架阶段无真实存储实现；
+ORM 类命名规则：`ProjectStateRecord`（Record 后缀）。
 """
 
 from __future__ import annotations
 
 from ulid import ULID
 
-from design.models import ConversationTurn, ProjectState
+from chat.models import ConversationTurn, ProjectState
 
 HISTORY_MAX_TURNS = 20
 """会话历史有界保留（LLM 上下文窗），超出裁掉最旧。"""
@@ -21,7 +22,7 @@ async def find_project(project_id: str) -> ProjectState | None:
     return None
 
 
-# --- 会话键控的项目与历史（进程内存骨架；落库归 svc_design.projects / 会话表） ---
+# --- 会话键控的项目快照与历史（进程内存骨架；落库归 svc_chat 会话表） ---
 # 会话键 = f"{channel_type}:{channel_instance}:{external_user_id}"。
 # TODO(identity)：identity 归一后改为渠道无关的 user_id 键控（对齐 §6.5）。
 
@@ -58,7 +59,7 @@ def reset_conversations() -> None:
     _histories.clear()
 
 
-# 入站消息去重（幂等）。骨架阶段为进程内存实现；落库时归 svc_design 的
+# 入站消息去重（幂等）。骨架阶段为进程内存实现；落库时归 svc_chat 的
 # 入站消息表（与 outbox 同事务），进程重启不丢。
 _seen_message_ids: set[str] = set()
 

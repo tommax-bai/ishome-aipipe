@@ -1,6 +1,6 @@
 """真网络会话冒烟（可选，需本机 LiteLLM 网关在线，默认 http://127.0.0.1:4000）。
 
-用途：验证 design-svc Orchestrator 走真实网关（逻辑模型名路由）的一轮多消息
+用途：验证 chat-svc Orchestrator 走真实网关（逻辑模型名路由）的一轮多消息
 对话——事实抽取、追问、确认清单触发。不启动 gRPC，直接驱动 service 层，
 出站用内存捕获。CI 不跑本脚本（真网络）。
 
@@ -14,9 +14,9 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from design import service
-from design.llm_client import LiteLlmClient
-from design.repo import reset_conversations, reset_seen_messages
+from chat import service
+from chat.llm_client import LiteLlmClient
+from chat.repo import reset_conversations, reset_seen_messages
 from ishome.channel.v1 import message_pb2
 from ishome.common.v1 import channel_type_pb2
 

@@ -5,11 +5,10 @@ from __future__ import annotations
 
 def test_import_all_members() -> None:
     import adapters
-    import design.models
-    import design.repo
-    import design.router
-    import design.service
-    import design.workflows
+    import chat.models
+    import chat.repo
+    import chat.router
+    import chat.service
     import genpipe.models
     import genpipe.repo
     import genpipe.router
@@ -22,14 +21,14 @@ def test_import_all_members() -> None:
     import scoring
 
     assert adapters and patch_engine and scoring
-    assert design.models and design.repo and design.router and design.service and design.workflows
+    assert chat.models and chat.repo and chat.router and chat.service
     assert genpipe.models and genpipe.repo and genpipe.router and genpipe.service
     assert genpipe.workflows and genpipe_worker.activities and genpipe_worker.models
     assert genpipe_worker.worker
 
 
 def test_fact_cognitive_states() -> None:
-    from design.models import Fact
+    from chat.models import Fact
 
     fact = Fact(
         target_id="space-living-room",

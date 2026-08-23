@@ -7,7 +7,8 @@
 - LLM 一律经 LiteLLM 网关（llm_client），业务只引用任务级逻辑模型名；
 - 结构类红线（§8.3）：口述结构信息永不进入可确认集合，回复附两条路径说明；
 - TODO(identity)：会话键 → identity 归一 user_id；
-- TODO(workflow)：确认完成 signal DesignProjectWorkflow；
+- TODO(project-svc)：确认完成 → artifact_confirmed 业务事实发往 project-svc
+  （V1.5：里程碑引擎事件驱动，原设计项目长周期 workflow 方案作废）；
 - TODO(h5-pointing)：看图点错确认形态（H5 指图时刻）。
 """
 
@@ -19,10 +20,10 @@ from typing import Protocol
 from ishome.channel.v1 import message_pb2
 from ulid import ULID
 
-from design import intent as intent_router
-from design import orchestrator
-from design.models import ConversationTurn, ProjectState
-from design.repo import (
+from chat import intent as intent_router
+from chat import orchestrator
+from chat.models import ConversationTurn, ProjectState
+from chat.repo import (
     append_history,
     find_or_create_project,
     find_project,

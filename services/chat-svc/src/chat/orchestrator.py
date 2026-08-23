@@ -6,7 +6,8 @@
 
 v1 范围：初步阶段的最小必要输入（§3.1）经自然对话收集，集齐后出文本版
 确认清单（§8.2 的文本形态；H5 看图点错后置——TODO(h5-pointing)）。
-TODO(workflow)：确认完成后 signal DesignProjectWorkflow（workflows.py）。
+TODO(project-svc)：确认完成后 artifact_confirmed 业务事实发往 project-svc
+（V1.5：里程碑引擎事件驱动，原设计项目长周期 workflow 方案作废）。
 TODO(events)：design.fact.confirmed / corrected 经 outbox 上总线（RocketMQ 接入后）。
 """
 
@@ -18,7 +19,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
-from design.models import ConversationTurn, Fact, ProjectState, fact_key
+from chat.models import ConversationTurn, Fact, ProjectState, fact_key
 
 ORCHESTRATOR_MODEL = "design-orchestrator.default"
 """主对话逻辑模型名（物理映射见 infra LiteLLM 配置）。"""
@@ -227,7 +228,7 @@ def upgrade_confirmed(project: ProjectState) -> int:
             upgraded += 1
     project.open_confirmation_ids = []
     project.minimum_inputs_confirmed = True
-    # TODO(workflow)：signal DesignProjectWorkflow.confirm_facts
+    # TODO(project-svc)：artifact_confirmed 业务事实发往 project-svc（V1.5）
     # TODO(events)：design.fact.confirmed 上总线
     return upgraded
 

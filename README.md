@@ -8,7 +8,7 @@
 services/
   genpipe-svc/      # 生成工作流编排（Temporal workflow）+ 机检门禁状态机（全自动）  [Python, FastAPI]
   genpipe-worker/   # 10 个 activity 执行：解析/布局/规则/母版/风格图/场景/渲染/机检   [Python]
-  design-svc/       # 交互设计会话：Orchestrator、确认闭环、Patch 引擎、ProjectState 属主 [Python, FastAPI]
+  chat-svc/         # 会话引擎（V1.5，由 design-svc 更名）：理解/情绪/封闭动作集/记忆画像/承诺区/主动消息；ProjectState 属主已移交 project-svc（backend）[Python, FastAPI]
 packages/
   scoring/          # 打分器端口（变化轴 #6，scorer_id 入 contracts 注册表）
   adapters/         # 各模型提示词/出入参变换（LiteLLM 已是 API 层 adapter，本包禁止再造 API 适配）
@@ -27,7 +27,7 @@ tests/              # 工作区级守门测试（activity 注册名一致性、�
 
 ## Temporal 口径
 
-- **双 namespace**：`genpipe`（批量生成作业）与 `design`（跨月长周期项目工作流，用户确认=signal，continue-as-new 控历史）相互隔离。
+- **Temporal 收缩至任务层**（V1.5 裁决）：仅 `genpipe` namespace（生成管线 workflow/activity，重试/心跳/超时用原生语义）。原"设计项目=长周期 Temporal workflow（continue-as-new）"方案作废——里程碑真相在表 + 事件驱动 checkCompletion（project-svc）。
 - **activity 注册名只增不改**，唯一真源 ishome-contracts `activities/registry.md`；本仓 `tests/test_activity_registry.py` 与其保持逐字一致。
 
 ## 常用命令

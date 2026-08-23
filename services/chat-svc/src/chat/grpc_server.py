@@ -1,9 +1,11 @@
 """gRPC 入站适配：contracts `DesignService` 服务端（与 router 同级的入站层，兼组合根）。
 
-- 入站 → service 单向（import-linter 锁定，禁越层触 repo/workflows）；
-- 联调契约：本服务默认监听 :9101（env `DESIGN_GRPC_PORT`），出站回话经
+契约入口沿用 contracts design.v1 `DesignService`——V1.5 更名 chat-svc 不动跨仓契约。
+
+- 入站 → service 单向（import-linter 锁定，禁越层触 repo）；
+- 联调契约：本服务默认监听 :9101（env `CHAT_GRPC_PORT`），出站回话经
   channel-svc gRPC（env `CHANNEL_GRPC_TARGET`，默认 localhost:9102）；
-- 启动方式：`uv run design-grpc`。
+- 启动方式：`uv run chat-grpc`。
 """
 
 from __future__ import annotations
@@ -16,11 +18,11 @@ from typing import Any
 import grpc
 from ishome.design.v1 import service_pb2, service_pb2_grpc
 
-from design import service as design_service
-from design.channel_client import DEFAULT_CHANNEL_GRPC_TARGET, ChannelClient
-from design.llm_client import LiteLlmClient
+from chat import service as chat_service
+from chat.channel_client import DEFAULT_CHANNEL_GRPC_TARGET, ChannelClient
+from chat.llm_client import LiteLlmClient
 
-DEFAULT_DESIGN_GRPC_PORT = 9101
+DEFAULT_CHAT_GRPC_PORT = 9101
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,9 @@ class DesignGrpcServicer(service_pb2_grpc.DesignServiceServicer):
 
     def __init__(
         self,
-        sender: design_service.OutboundSender,
-        llm: design_service.LlmCompletion,
-        capability: design_service.CapabilityLookup | None = None,
+        sender: chat_service.OutboundSender,
+        llm: chat_service.LlmCompletion,
+        capability: chat_service.CapabilityLookup | None = None,
     ) -> None:
         self._sender = sender
         self._llm = llm
@@ -41,7 +43,7 @@ class DesignGrpcServicer(service_pb2_grpc.DesignServiceServicer):
     async def IngestMessage(
         self, request: service_pb2.IngestMessageRequest, context: Any
     ) -> service_pb2.IngestMessageResponse:
-        message_id = await design_service.ingest_message(
+        message_id = await chat_service.ingest_message(
             request.message, self._sender, self._llm, self._capability
         )
         return service_pb2.IngestMessageResponse(message_id=message_id)
@@ -49,8 +51,9 @@ class DesignGrpcServicer(service_pb2_grpc.DesignServiceServicer):
     async def SubmitConfirmation(
         self, request: service_pb2.SubmitConfirmationRequest, context: Any
     ) -> service_pb2.SubmitConfirmationResponse:
-        # 接入点：确认项升级 user_confirmed + DesignProjectWorkflow confirm_facts signal
-        await context.abort(grpc.StatusCode.UNIMPLEMENTED, "确认闭环待接入 workflow signal")
+        # 接入点：确认项升级 user_confirmed → artifact_confirmed 业务事实发往 project-svc
+        # （V1.5：里程碑引擎事件驱动，原 DesignProjectWorkflow signal 方案作废）
+        await context.abort(grpc.StatusCode.UNIMPLEMENTED, "确认闭环待接入 project-svc 事实上报")
         raise AssertionError("unreachable")  # abort 恒抛出；此行安抚类型检查
 
     async def SubmitPatch(
@@ -75,9 +78,9 @@ class DesignGrpcServicer(service_pb2_grpc.DesignServiceServicer):
 
 
 def build_server(
-    sender: design_service.OutboundSender,
-    llm: design_service.LlmCompletion,
-    capability: design_service.CapabilityLookup | None = None,
+    sender: chat_service.OutboundSender,
+    llm: chat_service.LlmCompletion,
+    capability: chat_service.CapabilityLookup | None = None,
 ) -> Any:
     """组装 grpc.aio server（未绑定端口——测试用 :0 随机端口，serve 用配置端口）。"""
     server = grpc.aio.server()
@@ -88,7 +91,7 @@ def build_server(
 
 
 async def serve() -> None:
-    port = int(os.environ.get("DESIGN_GRPC_PORT", DEFAULT_DESIGN_GRPC_PORT))
+    port = int(os.environ.get("CHAT_GRPC_PORT", DEFAULT_CHAT_GRPC_PORT))
     channel_target = os.environ.get("CHANNEL_GRPC_TARGET", DEFAULT_CHANNEL_GRPC_TARGET)
     llm = LiteLlmClient()
     async with ChannelClient(channel_target) as channel_client:
@@ -97,7 +100,7 @@ async def serve() -> None:
             server.add_insecure_port(f"0.0.0.0:{port}")
             await server.start()
             logger.info(
-                "design-svc gRPC listening on :%d, channel target %s, llm gateway %s",
+                "chat-svc gRPC listening on :%d, channel target %s, llm gateway %s",
                 port,
                 channel_target,
                 llm.base_url,

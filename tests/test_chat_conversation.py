@@ -13,11 +13,11 @@ from typing import Any, cast
 
 import grpc
 import pytest
-from design import orchestrator, service
-from design.channel_client import ChannelClient
-from design.grpc_server import build_server
-from design.intent import parse_intent, route_intent
-from design.repo import find_or_create_project, reset_conversations, reset_seen_messages
+from chat import orchestrator, service
+from chat.channel_client import ChannelClient
+from chat.grpc_server import build_server
+from chat.intent import parse_intent, route_intent
+from chat.repo import find_or_create_project, reset_conversations, reset_seen_messages
 from ishome.channel.v1 import message_pb2
 from ishome.channel.v1 import service_pb2 as channel_service_pb2
 from ishome.channel.v1 import service_pb2_grpc as channel_service_pb2_grpc
@@ -383,13 +383,13 @@ async def grpc_harness() -> AsyncIterator[tuple[CapturingChannelServicer, Any]]:
     await channel_server.start()
     channel_client = ChannelClient(f"127.0.0.1:{channel_port}")
     llm = FakeLlm(intents=[intent_json("other")], turns=[turn_json([], "你好，我是你的设计顾问。")])
-    design_server = build_server(channel_client, llm)
-    design_port = design_server.add_insecure_port("127.0.0.1:0")
-    await design_server.start()
-    async with grpc.aio.insecure_channel(f"127.0.0.1:{design_port}") as caller:
+    chat_server = build_server(channel_client, llm)
+    chat_port = chat_server.add_insecure_port("127.0.0.1:0")
+    await chat_server.start()
+    async with grpc.aio.insecure_channel(f"127.0.0.1:{chat_port}") as caller:
         yield captured, design_service_pb2_grpc.DesignServiceStub(caller)
     await channel_client.aclose()
-    await design_server.stop(grace=None)
+    await chat_server.stop(grace=None)
     await channel_server.stop(grace=None)
 
 

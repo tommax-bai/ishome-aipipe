@@ -1,12 +1,12 @@
 [project]
 name = "ishome-aipipe"
 version = "0.0.0"
-description = "《是我的家》生成域 monorepo：genpipe-svc / genpipe-worker / design-svc + packages（uv workspace 虚根）"
+description = "《是我的家》生成域 monorepo：genpipe-svc / genpipe-worker / chat-svc + packages（uv workspace 虚根）"
 requires-python = ">=3.12"
 dependencies = [
   "genpipe-svc",
   "genpipe-worker",
-  "design-svc",
+  "chat-svc",
   "scoring",
   "adapters",
   "patch-engine",
@@ -21,7 +21,7 @@ members = ["services/*", "packages/*"]
 [tool.uv.sources]
 genpipe-svc = { workspace = true }
 genpipe-worker = { workspace = true }
-design-svc = { workspace = true }
+chat-svc = { workspace = true }
 scoring = { workspace = true }
 adapters = { workspace = true }
 patch-engine = { workspace = true }
@@ -58,7 +58,7 @@ untyped_calls_exclude = ["ishome"]
 files = [
   "services/genpipe-svc/src",
   "services/genpipe-worker/src",
-  "services/design-svc/src",
+  "services/chat-svc/src",
   "packages/scoring/src",
   "packages/adapters/src",
   "packages/patch-engine/src",
@@ -86,7 +86,7 @@ asyncio_mode = "auto"
 root_packages = [
   "genpipe",
   "genpipe_worker",
-  "design",
+  "chat",
   "scoring",
   "adapters",
   "patch_engine",
@@ -96,19 +96,19 @@ include_external_packages = true
 [[tool.importlinter.contracts]]
 name = "workflows 无 IO：只许依赖 models 与 activity 注册名（Temporal 可重放硬约束，非风格偏好）"
 type = "forbidden"
-source_modules = ["genpipe.workflows", "design.workflows"]
+source_modules = ["genpipe.workflows"]
 forbidden_modules = [
   "genpipe.repo",
   "genpipe.service",
   "genpipe.router",
-  "design.repo",
-  "design.service",
-  "design.router",
-  "design.grpc_server",
-  "design.channel_client",
-  "design.llm_client",
-  "design.intent",
-  "design.orchestrator",
+  "chat.repo",
+  "chat.service",
+  "chat.router",
+  "chat.grpc_server",
+  "chat.channel_client",
+  "chat.llm_client",
+  "chat.intent",
+  "chat.orchestrator",
   "genpipe_worker",
   "fastapi",
   "grpc",
@@ -119,7 +119,7 @@ forbidden_modules = [
 name = "领域纵切内 router → service → repo → models 单向"
 type = "layers"
 layers = ["router", "service", "repo", "models"]
-containers = ["genpipe", "design"]
+containers = ["genpipe", "chat"]
 
 [[tool.importlinter.contracts]]
 name = "worker 内 worker → activities → models 单向"
@@ -128,24 +128,23 @@ layers = ["worker", "activities", "models"]
 containers = ["genpipe_worker"]
 
 [[tool.importlinter.contracts]]
-name = "跨 domain 数据属主唯一：design 禁触 genpipe 内部（只许经对方 service）"
+name = "跨 domain 数据属主唯一：chat 禁触 genpipe 内部（只许经对方 service）"
 type = "forbidden"
-source_modules = ["design"]
+source_modules = ["chat"]
 forbidden_modules = ["genpipe.repo", "genpipe.router", "genpipe.workflows", "genpipe_worker"]
 
 [[tool.importlinter.contracts]]
-name = "跨 domain 数据属主唯一：genpipe 禁触 design 内部（只许经对方 service）"
+name = "跨 domain 数据属主唯一：genpipe 禁触 chat 内部（只许经对方 service）"
 type = "forbidden"
 source_modules = ["genpipe"]
 forbidden_modules = [
-  "design.repo",
-  "design.router",
-  "design.workflows",
-  "design.grpc_server",
-  "design.channel_client",
-  "design.llm_client",
-  "design.intent",
-  "design.orchestrator",
+  "chat.repo",
+  "chat.router",
+  "chat.grpc_server",
+  "chat.channel_client",
+  "chat.llm_client",
+  "chat.intent",
+  "chat.orchestrator",
   "genpipe_worker",
 ]
 
@@ -157,68 +156,64 @@ forbidden_modules = [
   "genpipe.repo",
   "genpipe.router",
   "genpipe.workflows",
-  "design.repo",
-  "design.router",
-  "design.workflows",
-  "design.grpc_server",
-  "design.channel_client",
-  "design.llm_client",
-  "design.intent",
-  "design.orchestrator",
+  "chat.repo",
+  "chat.router",
+  "chat.grpc_server",
+  "chat.channel_client",
+  "chat.llm_client",
+  "chat.intent",
+  "chat.orchestrator",
 ]
 
 [[tool.importlinter.contracts]]
-name = "design 入站边缘 grpc_server → service 单向：禁直接越层触 repo / workflows"
+name = "chat 入站边缘 grpc_server → service 单向：禁直接越层触 repo"
 type = "forbidden"
-source_modules = ["design.grpc_server"]
-forbidden_modules = ["design.repo", "design.workflows", "fastapi"]
+source_modules = ["chat.grpc_server"]
+forbidden_modules = ["chat.repo", "fastapi"]
 # 只禁直接 import（经 service 的传递依赖是分层的正常形态）
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-name = "design 出站边缘 channel_client 不感知上层：只依赖 contracts 生成代码与运行库"
+name = "chat 出站边缘 channel_client 不感知上层：只依赖 contracts 生成代码与运行库"
 type = "forbidden"
-source_modules = ["design.channel_client"]
+source_modules = ["chat.channel_client"]
 forbidden_modules = [
-  "design.service",
-  "design.router",
-  "design.grpc_server",
-  "design.repo",
-  "design.workflows",
-  "design.models",
+  "chat.service",
+  "chat.router",
+  "chat.grpc_server",
+  "chat.repo",
+  "chat.models",
   "fastapi",
 ]
 
 [[tool.importlinter.contracts]]
-name = "design 出站边缘 llm_client 不感知上层：只依赖运行库（模型轴 R7 一轴一层）"
+name = "chat 出站边缘 llm_client 不感知上层：只依赖运行库（模型轴 R7 一轴一层）"
 type = "forbidden"
-source_modules = ["design.llm_client"]
+source_modules = ["chat.llm_client"]
 forbidden_modules = [
-  "design.service",
-  "design.router",
-  "design.grpc_server",
-  "design.repo",
-  "design.workflows",
-  "design.models",
-  "design.intent",
-  "design.orchestrator",
-  "design.channel_client",
+  "chat.service",
+  "chat.router",
+  "chat.grpc_server",
+  "chat.repo",
+  "chat.models",
+  "chat.intent",
+  "chat.orchestrator",
+  "chat.channel_client",
   "fastapi",
   "grpc",
 ]
 
 [[tool.importlinter.contracts]]
-name = "design 服务层助手 intent / orchestrator 不越层：只依赖 models 与协议位"
+name = "chat 服务层助手 intent / orchestrator 不越层：只依赖 models 与协议位"
 type = "forbidden"
-source_modules = ["design.intent", "design.orchestrator"]
+source_modules = ["chat.intent", "chat.orchestrator"]
 forbidden_modules = [
-  "design.repo",
-  "design.router",
-  "design.grpc_server",
-  "design.channel_client",
-  "design.llm_client",
-  "design.workflows",
-  "design.service",
+  "chat.repo",
+  "chat.router",
+  "chat.grpc_server",
+  "chat.channel_client",
+  "chat.llm_client",
+  "chat.service",
   "fastapi",
   "grpc",
   "httpx",
@@ -228,4 +223,4 @@ forbidden_modules = [
 name = "packages 不感知使用者：库禁止反向依赖 services"
 type = "forbidden"
 source_modules = ["scoring", "adapters", "patch_engine"]
-forbidden_modules = ["genpipe", "genpipe_worker", "design"]
+forbidden_modules = ["genpipe", "genpipe_worker", "chat"]
