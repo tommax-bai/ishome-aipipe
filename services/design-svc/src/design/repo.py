@@ -7,13 +7,55 @@ scenes / artifacts / open_questions / outbox（本地事务 + outbox 发事件�
 
 from __future__ import annotations
 
-from design.models import ProjectState
+from ulid import ULID
+
+from design.models import ConversationTurn, ProjectState
+
+HISTORY_MAX_TURNS = 20
+"""会话历史有界保留（LLM 上下文窗），超出裁掉最旧。"""
 
 
 async def find_project(project_id: str) -> ProjectState | None:
     """find = 可空查询。骨架阶段恒返回 None。"""
     _ = project_id
     return None
+
+
+# --- 会话键控的项目与历史（进程内存骨架；落库归 svc_design.projects / 会话表） ---
+# 会话键 = f"{channel_type}:{channel_instance}:{external_user_id}"。
+# TODO(identity)：identity 归一后改为渠道无关的 user_id 键控（对齐 §6.5）。
+
+_projects: dict[str, ProjectState] = {}
+_histories: dict[str, list[ConversationTurn]] = {}
+
+
+async def find_or_create_project(conversation_key: str) -> ProjectState:
+    """按会话键取项目，无则创建（v1 一人一项目；多项目管理后置）。"""
+    project = _projects.get(conversation_key)
+    if project is None:
+        project = ProjectState(project_id=str(ULID()), user_id=conversation_key)
+        _projects[conversation_key] = project
+    return project
+
+
+async def save_project(conversation_key: str, project: ProjectState) -> None:
+    _projects[conversation_key] = project
+
+
+async def append_history(conversation_key: str, turn: ConversationTurn) -> None:
+    turns = _histories.setdefault(conversation_key, [])
+    turns.append(turn)
+    del turns[:-HISTORY_MAX_TURNS]
+
+
+async def get_history(conversation_key: str) -> list[ConversationTurn]:
+    return list(_histories.get(conversation_key, []))
+
+
+def reset_conversations() -> None:
+    """清空项目与历史——仅供测试隔离使用。"""
+    _projects.clear()
+    _histories.clear()
 
 
 # 入站消息去重（幂等）。骨架阶段为进程内存实现；落库时归 svc_design 的

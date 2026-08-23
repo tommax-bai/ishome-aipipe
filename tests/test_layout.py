@@ -23,6 +23,10 @@ ALLOWED_VERTICAL_FILES = {
     # 2026-08-23 纵切评审通过的入站/出站边缘（import-linter 有对应方向契约）：
     "grpc_server.py",  # gRPC 入站适配，与 router 同级（contracts DesignService 服务端）
     "channel_client.py",  # 出站边缘：channel-svc gRPC 客户端（只依赖 contracts 生成代码）
+    # 2026-08-23 Orchestrator v1 评审通过的服务层助手与出站边缘（import-linter 有对应契约）：
+    "llm_client.py",  # 出站边缘：LiteLLM 网关客户端（任务级逻辑模型名，物理映射在 infra）
+    "intent.py",  # 服务层助手：Intent Router（§5.2），只依赖 models 与协议位
+    "orchestrator.py",  # 服务层助手：Design Orchestrator（§5.1），只依赖 models 与协议位
 }
 
 

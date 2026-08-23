@@ -106,9 +106,13 @@ forbidden_modules = [
   "design.router",
   "design.grpc_server",
   "design.channel_client",
+  "design.llm_client",
+  "design.intent",
+  "design.orchestrator",
   "genpipe_worker",
   "fastapi",
   "grpc",
+  "httpx",
 ]
 
 [[tool.importlinter.contracts]]
@@ -139,6 +143,9 @@ forbidden_modules = [
   "design.workflows",
   "design.grpc_server",
   "design.channel_client",
+  "design.llm_client",
+  "design.intent",
+  "design.orchestrator",
   "genpipe_worker",
 ]
 
@@ -155,6 +162,9 @@ forbidden_modules = [
   "design.workflows",
   "design.grpc_server",
   "design.channel_client",
+  "design.llm_client",
+  "design.intent",
+  "design.orchestrator",
 ]
 
 [[tool.importlinter.contracts]]
@@ -177,6 +187,41 @@ forbidden_modules = [
   "design.workflows",
   "design.models",
   "fastapi",
+]
+
+[[tool.importlinter.contracts]]
+name = "design 出站边缘 llm_client 不感知上层：只依赖运行库（模型轴 R7 一轴一层）"
+type = "forbidden"
+source_modules = ["design.llm_client"]
+forbidden_modules = [
+  "design.service",
+  "design.router",
+  "design.grpc_server",
+  "design.repo",
+  "design.workflows",
+  "design.models",
+  "design.intent",
+  "design.orchestrator",
+  "design.channel_client",
+  "fastapi",
+  "grpc",
+]
+
+[[tool.importlinter.contracts]]
+name = "design 服务层助手 intent / orchestrator 不越层：只依赖 models 与协议位"
+type = "forbidden"
+source_modules = ["design.intent", "design.orchestrator"]
+forbidden_modules = [
+  "design.repo",
+  "design.router",
+  "design.grpc_server",
+  "design.channel_client",
+  "design.llm_client",
+  "design.workflows",
+  "design.service",
+  "fastapi",
+  "grpc",
+  "httpx",
 ]
 
 [[tool.importlinter.contracts]]

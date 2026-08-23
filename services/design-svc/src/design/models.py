@@ -22,6 +22,13 @@ FactKind = Literal["dimensional", "structural"]
 ProjectPhase = Literal["preliminary", "deep"]
 
 
+class ConversationTurn(BaseModel):
+    """会话历史一轮（LLM 上下文用，有界保留；持久化归 svc_design 落库后）。"""
+
+    role: Literal["user", "assistant"]
+    text: str
+
+
 class Fact(BaseModel):
     """带认知状态的关键数据（Agent 方案 §8.1 的 JSON 示例直接落列）。"""
 
@@ -34,6 +41,11 @@ class Fact(BaseModel):
     source: str
     confidence: float | None = None
     stage: ProjectPhase = "preliminary"
+
+
+def fact_key(fact: Fact) -> str:
+    """Fact 的确认清单键（confirmation_item 定位用）：target_id + property。"""
+    return f"{fact.target_id}#{fact.property}"
 
 
 class BaseFacts(BaseModel):
@@ -65,3 +77,7 @@ class ProjectState(BaseModel):
     phase: ProjectPhase = "preliminary"
     revision: int = 0
     base_facts: BaseFacts = Field(default_factory=BaseFacts)
+    # 确认闭环（§8.2）：当前待确认的 fact_key 清单（对齐 svc_design.open_questions）
+    open_confirmation_ids: list[str] = Field(default_factory=list)
+    # 最小必要输入（§3.1）是否已全部 user_confirmed——初步方案生成的前置门
+    minimum_inputs_confirmed: bool = False

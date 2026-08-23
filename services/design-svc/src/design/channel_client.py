@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import grpc
 from ishome.channel.v1 import message_pb2, service_pb2, service_pb2_grpc
+from ishome.common.v1 import channel_type_pb2
 
 DEFAULT_CHANNEL_GRPC_TARGET = "localhost:9102"
 
@@ -37,6 +38,19 @@ class ChannelClient:
             await self._stub().SendMessage(request),
         )
         return response.message_id
+
+    async def supports_quick_reply(self, channel_type: int, channel_instance: str) -> bool:
+        """能力查询薄访问器（实现 service.CapabilityLookup 协议；按能力分支，R5）。"""
+        request = service_pb2.GetCapabilityRequest(
+            # 协议位用 int（proto 枚举 ValueType 即 int NewType），构造处收窄
+            channel_type=cast("channel_type_pb2.ChannelType", channel_type),
+            channel_instance=channel_instance,
+        )
+        response = cast(
+            service_pb2.GetCapabilityResponse,
+            await self._stub().GetCapability(request),
+        )
+        return bool(response.capability.supports_quick_reply)
 
     async def aclose(self) -> None:
         if self._channel is not None:
