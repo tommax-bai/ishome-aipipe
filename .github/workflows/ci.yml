@@ -10,6 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # contracts 为 git+ssh 依赖（tag v0.1.2, subdirectory=gen/python）：装载只读 deploy key
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.CONTRACTS_DEPLOY_KEY }}
+      - run: ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"

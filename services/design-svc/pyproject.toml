@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "交互设计会话：Design Orchestrator、确认闭环、Patch 引擎、ProjectState 属主、设计项目 Temporal 工作流（namespace: design）"
 requires-python = ">=3.12"
 dependencies = [
+  "ishome-contracts",
   "fastapi>=0.115",
   "temporalio>=1.8",
   "pydantic>=2.9",
@@ -11,6 +12,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.1.2", subdirectory = "gen/python" }
 patch-engine = { workspace = true }
 
 [build-system]

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "生成/打分/合规检测/母版绘制/场景编译/渲染 activities（弹性伸缩轴独立）"
 requires-python = ">=3.12"
 dependencies = [
+  "ishome-contracts",
   "temporalio>=1.8",
   "pydantic>=2.9",
   "adapters",
@@ -11,6 +12,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.1.2", subdirectory = "gen/python" }
 adapters = { workspace = true }
 scoring = { workspace = true }
 
