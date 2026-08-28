@@ -29,6 +29,7 @@ tests/              # 工作区级守门测试（activity 注册名一致性、�
 
 - **Temporal 收缩至任务层**（V1.5 裁决）：仅 `genpipe` namespace（生成管线 workflow/activity，重试/心跳/超时用原生语义）。原"设计项目=长周期 Temporal workflow（continue-as-new）"方案作废——里程碑真相在表 + 事件驱动 checkCompletion（project-svc）。
 - **activity 注册名只增不改**，唯一真源 ishome-contracts `activities/registry.md`；本仓 `tests/test_activity_registry.py` 与其保持逐字一致。
+- **报告成文线**（`ReportComposeWorkflow`，图 v0.2 §2）：各 dom- 单元并行成文 → 页面装配 → 册级校验，三个 activity 全部派往 `reportgen-activities`（实现在 ishome-reportgen）。数字在求值线（project-svc 规则引擎）算完，报告数据包对本仓是**不透明载荷**（schema 归 contracts `rulebook/`，本仓不建模其字段）；任一域失败即整册失败，不出"其余页"。
 
 ## chat-svc 会话存储（svc_chat）
 

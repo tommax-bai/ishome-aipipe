@@ -1,16 +1,25 @@
-"""GenerationTask 路由链与机检门禁判定的纯函数直测（不依赖 Temporal 运行时）。"""
+"""两条线的编排纯函数直测（不依赖 Temporal 运行时）：
+
+生成管线——GenerationTask 路由链与机检门禁判定；
+报告成文线——各 dom- 单元并行成文的结果归并与违规透传。
+"""
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 from genpipe.models import GenerationTaskSpec, TaskQueues, TaskStep
 from genpipe.workflows import (
     PipelineDataError,
     build_task_chain,
+    collect_violations,
     describe_failure,
     evaluate_gate,
+    partition_unit_outcomes,
     pick_template,
     resolve_step_arg,
+    unexplained_failure_checks,
 )
 
 
@@ -111,3 +120,85 @@ def test_describe_failure_surfaces_pipeline_error_code() -> None:
     assert describe_failure(PipelineDataError("plan-rule-check:not-passed")) == (
         "plan-rule-check:not-passed"
     )
+
+
+# ---------------------------------------------------------------------------
+# 报告成文线
+# ---------------------------------------------------------------------------
+
+
+def _unit(domain: str, verdict: str = "ok", **overrides: Any) -> dict[str, Any]:
+    """单元成文结果的最小形状（reportgen UnitComposeResult 的 dict 形态，编排侧只透传）。"""
+    unit: dict[str, Any] = {
+        "verdict": verdict,
+        "domain": domain,
+        "cards": [{"thesis": "t", "body": "b", "number_refs": []}] if verdict == "ok" else [],
+        "violations": [],
+        "rewrites_used": 0,
+        "releases": [],
+    }
+    unit.update(overrides)
+    return unit
+
+
+def test_partition_keeps_ok_units_intact_and_records_rewrite_rounds() -> None:
+    """全 ok：单元结果原样留给装配（不拆包重组），重写轮数按域归集。"""
+    fanout = partition_unit_outcomes(
+        ["dom-lighting", "dom-budget"],
+        [_unit("dom-lighting"), _unit("dom-budget", rewrites_used=2)],
+    )
+    assert [u["domain"] for u in fanout.composed_units] == ["dom-lighting", "dom-budget"]
+    assert fanout.composed_units[1]["rewrites_used"] == 2
+    assert fanout.failed_domains == []
+    assert fanout.rewrite_rounds_by_domain == {"dom-lighting": 0, "dom-budget": 2}
+
+
+def test_partition_marks_failed_unit_and_keeps_its_violations() -> None:
+    """某域 failed：失败单元原样保留（自带 domain 与 violations），不并入成功集。"""
+    failed_unit = _unit(
+        "dom-budget",
+        verdict="failed",
+        rewrites_used=2,
+        violations=[{"check": "cr-budget-stale-price", "detail": "单价过期"}],
+    )
+    fanout = partition_unit_outcomes(
+        ["dom-lighting", "dom-budget"], [_unit("dom-lighting"), failed_unit]
+    )
+    assert fanout.failed_domains == ["dom-budget"]
+    assert fanout.failed_units == [failed_unit]
+    assert [u["domain"] for u in fanout.composed_units] == ["dom-lighting"]
+    assert fanout.rewrite_rounds_by_domain["dom-budget"] == 2
+
+
+def test_partition_treats_dispatch_error_and_empty_cards_as_failure() -> None:
+    """派发异常与"ok 却零卡片"都算失败——绝不静默假成功，也不拿空内容顶替。"""
+    fanout = partition_unit_outcomes(
+        ["dom-lighting", "dom-storage", "dom-material"],
+        [
+            PipelineDataError("report-unit-compose:non-dict-result"),
+            _unit("dom-storage", cards=[]),
+            _unit("dom-material"),
+        ],
+    )
+    assert fanout.failed_domains == ["dom-lighting", "dom-storage"]
+    assert fanout.dispatch_failures == [
+        "report-unit-compose:dom-lighting:report-unit-compose:non-dict-result",
+        "report-unit-compose:dom-storage:no-cards",
+    ]
+    assert [u["domain"] for u in fanout.composed_units] == ["dom-material"]
+
+
+def test_collect_violations_passes_through_and_ignores_broken_shapes() -> None:
+    assert collect_violations({"violations": [{"check": "cr-x", "detail": "d"}]}) == [
+        {"check": "cr-x", "detail": "d"}
+    ]
+    assert collect_violations({"violations": "boom"}) == []
+    assert collect_violations({}) == []
+
+
+def test_unexplained_failure_gets_orchestration_code() -> None:
+    """failed 却不给违规清单 = 失败无理由：补编排层失败码，杜绝失败被吞掉。"""
+    assert unexplained_failure_checks("report-book-check", []) == [
+        "report-book-check:failed-without-violations"
+    ]
+    assert unexplained_failure_checks("report-book-check", [{"check": "cr-set-closure"}]) == []

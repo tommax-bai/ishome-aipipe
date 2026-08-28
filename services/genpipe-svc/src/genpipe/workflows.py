@@ -5,6 +5,9 @@
     → consistency-check → compliance-check → 达标 → 发布；
     不达标 → 自动重生成（带轮数上限，超限返回 failed verdict，绝不静默假成功）
 
+报告成文线（图 v0.2 §2 第二条流水线，ReportComposeWorkflow）：求值线在派发前把数字全部
+算完并封进报告数据包，本文件只做"派发—收结论"的编排——数据包是不透明载荷，原样透传。
+
 activity 一律以 contracts 注册表中的注册名字符串 + task_queue 派发（跨服务不 import
 存根签名），唯一真源：ishome-contracts `activities/registry.md` 与
 `registries/task_queues.md`（只增不改）。V1.5 裁决：Temporal 收缩至任务层——
@@ -14,6 +17,7 @@ activity 一律以 contracts 注册表中的注册名字符串 + task_queue 派�
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 
@@ -29,7 +33,11 @@ with workflow.unsafe.imports_passed_through():
         GenerationTaskResult,
         GenerationTaskSpec,
         MachineGateResult,
+        ReportComposeResult,
+        ReportComposeSpec,
+        ReportStage,
         TaskStep,
+        UnitFanoutOutcome,
     )
 
 # activity 注册名常量（与 contracts 注册表逐字一致，只增不改）
@@ -42,6 +50,9 @@ ACTIVITY_SCENE_COMPILE = "scene-compile"
 ACTIVITY_BASE_RENDER = "base-render"
 ACTIVITY_CONSISTENCY_CHECK = "consistency-check"
 ACTIVITY_COMPLIANCE_CHECK = "compliance-check"
+ACTIVITY_REPORT_UNIT_COMPOSE = "report-unit-compose"
+ACTIVITY_REPORT_PAGE_ASSEMBLE = "report-page-assemble"
+ACTIVITY_REPORT_BOOK_CHECK = "report-book-check"
 
 WORKFLOW_TASK_QUEUE = "genpipe-workflows"
 """workflow 专属队列：起点（service.py）与执行者（genpipe workflow worker）同属本服务，
@@ -53,6 +64,9 @@ _RENDER_TIMEOUT = timedelta(minutes=15)
 """绘图/渲染类长跑 activity 的 start_to_close 上限。"""
 _RENDER_HEARTBEAT = timedelta(seconds=60)
 """长跑绘图 activity 必须心跳：worker 失联在一个心跳窗口内被发现并重派。"""
+_COMPOSE_TIMEOUT = timedelta(minutes=10)
+"""单元成文 activity 的 start_to_close 上限：一次派发内含 1+max_rewrites 轮 LLM 推理。
+reportgen 侧不打心跳，故**不设** heartbeat_timeout——设了等于按心跳窗口误杀正常推理。"""
 _ACTIVITY_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     backoff_coefficient=2.0,
@@ -181,19 +195,67 @@ def describe_failure(error: BaseException) -> str:
     return f"{label}: {message}" if message else str(label)
 
 
+def partition_unit_outcomes(
+    domains: list[str], outcomes: Sequence[dict[str, Any] | BaseException]
+) -> UnitFanoutOutcome:
+    """各 dom- 单元并行成文的结果归并（纯函数，可直测）。
+
+    三类都算失败，绝不静默假成功：派发异常、verdict 非 ok、verdict=ok 却零卡片（空内容顶替）。
+    成功单元原样留给装配，失败单元原样回传（自带 domain 与 violations）。
+    """
+    fanout = UnitFanoutOutcome()
+    for domain, outcome in zip(domains, outcomes, strict=True):
+        if isinstance(outcome, BaseException):
+            fanout.failed_domains.append(domain)
+            fanout.dispatch_failures.append(
+                f"{ACTIVITY_REPORT_UNIT_COMPOSE}:{domain}:{describe_failure(outcome)}"
+            )
+            continue
+        rewrites_used = outcome.get("rewrites_used")
+        if isinstance(rewrites_used, int):
+            fanout.rewrite_rounds_by_domain[domain] = rewrites_used
+        if outcome.get("verdict") != "ok":
+            fanout.failed_domains.append(domain)
+            fanout.failed_units.append(outcome)
+            continue
+        if not outcome.get("cards"):
+            fanout.failed_domains.append(domain)
+            fanout.dispatch_failures.append(f"{ACTIVITY_REPORT_UNIT_COMPOSE}:{domain}:no-cards")
+            continue
+        fanout.composed_units.append(outcome)
+    return fanout
+
+
+def collect_violations(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """取 activity 的违规清单（纯函数）：原样透传不改写——判据编号归 release 数据，编排不解释。"""
+    raw = result.get("violations")
+    return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def unexplained_failure_checks(activity_name: str, violations: list[dict[str, Any]]) -> list[str]:
+    """failed 却不给违规清单 = 失败无理由（纯函数）：补一条编排层失败码，杜绝失败被吞掉。"""
+    return [] if violations else [f"{activity_name}:failed-without-violations"]
+
+
 async def _execute(
     activity_name: str,
     arg: Any,
     *,
     task_queue: str,
     long_running: bool = False,
+    start_to_close: timedelta | None = None,
 ) -> dict[str, Any]:
-    """按注册名字符串派发 activity；显式 task_queue / 超时 / 重试，长跑加心跳窗口。"""
+    """按注册名字符串派发 activity；显式 task_queue / 超时 / 重试，长跑加心跳窗口。
+
+    `start_to_close` 覆写默认两档超时（长跑绘图 / 计算校验）；不打心跳的长跑 activity
+    只覆写超时、不置 long_running，否则心跳窗口会误杀正常执行。
+    """
     result = await workflow.execute_activity(
         activity_name,
         arg,
         task_queue=task_queue,
-        start_to_close_timeout=_RENDER_TIMEOUT if long_running else _COMPUTE_TIMEOUT,
+        start_to_close_timeout=start_to_close
+        or (_RENDER_TIMEOUT if long_running else _COMPUTE_TIMEOUT),
         heartbeat_timeout=_RENDER_HEARTBEAT if long_running else None,
         retry_policy=_ACTIVITY_RETRY,
     )
@@ -375,4 +437,141 @@ class GenerationTaskWorkflow:
             )
         return GenerationTaskResult(
             task_id=spec.task_id, verdict="passed", artifact_ids=artifact_ids
+        )
+
+
+@workflow.defn
+class ReportComposeWorkflow:
+    """报告成文线编排（图 v0.2 §2 第二条流水线）：dom- 单元并行成文 → 页面装配 → 册级校验。
+
+    图 v0.2 §0 的硬性条件在本类逐条兑现：
+
+    - **只编排不计算**：数字在求值线（project-svc 规则引擎）算完，报告数据包对本编排是
+      不透明载荷，原样透传给 activity——本仓不建模包内任何字段；
+    - **一次生成 = 一次短 run**：不长驻、不做图内 checkpoint 恢复、不建第二台状态机；
+      "改一条决策局部重跑" = 里程碑引擎判定下次派哪些单元（规则 8.1），不在图内恢复；
+    - **单元间零通信**：各域同刻 fan-out，依赖只存在于求值线。
+
+    三个 activity 的实现与队列归属见 ishome-reportgen（`reportgen-activities`）；本编排
+    只按 contracts 注册名派发，不 import 对侧存根签名。
+    """
+
+    @workflow.run
+    async def run(self, spec: ReportComposeSpec) -> ReportComposeResult:
+        # 入参违约在派发前拦：域集为空/重复（重复域 → 装配出重复页 → 册检必挂）、数据包为空
+        # （求值线什么都没算出来）——都属于派了也注定失败，早拦省掉整轮 LLM 推理
+        for failure_code, violated in (
+            ("missing-domains", not spec.domains),
+            ("duplicate-domains", len(set(spec.domains)) != len(spec.domains)),
+            ("missing-package", not spec.package),
+        ):
+            if violated:
+                return ReportComposeResult(
+                    report_id=spec.report_id,
+                    verdict="failed",
+                    failed_stage="unit-compose",
+                    failed_checks=[failure_code],
+                )
+
+        outcomes = await asyncio.gather(
+            *[
+                _execute(
+                    ACTIVITY_REPORT_UNIT_COMPOSE,
+                    {
+                        "domain": domain,
+                        "package": spec.package,
+                        "max_rewrites": spec.max_rewrites,
+                    },
+                    task_queue=spec.queues.reportgen,
+                    start_to_close=_COMPOSE_TIMEOUT,
+                )
+                for domain in spec.domains
+            ],
+            return_exceptions=True,
+        )
+        fanout = partition_unit_outcomes(spec.domains, outcomes)
+
+        def failed(
+            stage: ReportStage,
+            *,
+            violations: list[dict[str, Any]] | None = None,
+            failed_checks: list[str] | None = None,
+        ) -> ReportComposeResult:
+            """失败结论一律带上失败单元与违规清单：不吞、不空顶（图 v0.2 §3 出口纪律）。"""
+            return ReportComposeResult(
+                report_id=spec.report_id,
+                verdict="failed",
+                failed_stage=stage,
+                failed_domains=fanout.failed_domains,
+                failed_units=fanout.failed_units,
+                violations=violations or [],
+                failed_checks=failed_checks or [],
+                rewrite_rounds_by_domain=fanout.rewrite_rounds_by_domain,
+            )
+
+        if fanout.failed_domains:
+            # 失败策略（本编排唯一的策略取舍，理由写在此处以免后人两头下注）：
+            # **任一域失败 → 整册失败，不装配、不出"其余页"**。三条理由：
+            # ① 下游 report-page-assemble 自身即以 gate-unit-failed 拒收残缺单元集，派过去
+            #    只是把同一裁决绕一圈；
+            # ② 册级判据是 set-closure / promise-fulfilled / concept-through（图 v0.2 §4），
+            #    判的是整册闭合——缺域的册在册检必然不合格，"出其余页"产的是注定不合格的册；
+            # ③ 报告是一次性交付物不是信息流：半本报告对用户是错的成品，不是少一节的成品。
+            # 注：并行 fan-out 不做提前取消——一次收齐全部域的违规，是自迭代回路（规则 4.17）
+            # 的输入信号，比早退省下的那点推理更值钱。
+            return failed("unit-compose", failed_checks=fanout.dispatch_failures)
+
+        try:
+            assembled = await _execute(
+                ACTIVITY_REPORT_PAGE_ASSEMBLE,
+                {"units": fanout.composed_units},
+                task_queue=spec.queues.reportgen,
+            )
+        except (ActivityError, PipelineDataError) as err:
+            return failed(
+                "page-assemble",
+                failed_checks=[f"{ACTIVITY_REPORT_PAGE_ASSEMBLE}:{describe_failure(err)}"],
+            )
+        if assembled.get("verdict") != "ok":
+            page_violations = collect_violations(assembled)
+            return failed(
+                "page-assemble",
+                violations=page_violations,
+                failed_checks=unexplained_failure_checks(
+                    ACTIVITY_REPORT_PAGE_ASSEMBLE, page_violations
+                ),
+            )
+        pages = assembled.get("pages")
+        if not isinstance(pages, list) or not pages:
+            # verdict=ok 却没有页：空内容顶替，按失败处理
+            return failed(
+                "page-assemble", failed_checks=[f"{ACTIVITY_REPORT_PAGE_ASSEMBLE}:missing-pages"]
+            )
+
+        try:
+            checked = await _execute(
+                ACTIVITY_REPORT_BOOK_CHECK,
+                {"pages": pages, "package": spec.package},
+                task_queue=spec.queues.reportgen,
+            )
+        except (ActivityError, PipelineDataError) as err:
+            return failed(
+                "book-check",
+                failed_checks=[f"{ACTIVITY_REPORT_BOOK_CHECK}:{describe_failure(err)}"],
+            )
+        if checked.get("verdict") != "ok":
+            book_violations = collect_violations(checked)
+            return failed(
+                "book-check",
+                violations=book_violations,
+                failed_checks=unexplained_failure_checks(
+                    ACTIVITY_REPORT_BOOK_CHECK, book_violations
+                ),
+            )
+
+        return ReportComposeResult(
+            report_id=spec.report_id,
+            verdict="ok",
+            pages=pages,
+            rewrite_rounds_by_domain=fanout.rewrite_rounds_by_domain,
         )

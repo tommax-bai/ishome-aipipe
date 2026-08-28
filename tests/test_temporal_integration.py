@@ -1,9 +1,10 @@
-"""集成冒烟：真连本地 Temporal（localhost:7233 / namespace genpipe）跑两个 workflow。
+"""集成冒烟：真连本地 Temporal（localhost:7233 / namespace genpipe）跑三个 workflow。
 
 测试 Worker 把 mock activity 实现注册到唯一随机 task queue（spec.queues 全部收拢到
 该队列），覆盖 GenBatchWorkflow 门禁通过 / 不通过自动重生成 / 重试超限失败三条路径，
-以及 GenerationTaskWorkflow 的 atmosphere-visual 路由链。服务器不可达时整体 skip
-（CI 无 Temporal 也能绿）；mock 只存在于测试内，生产 activity 存根保持 NotImplementedError。
+GenerationTaskWorkflow 的 atmosphere-visual 路由链，以及 ReportComposeWorkflow 的
+成文线主干与三阶段失败（单元 / 装配 / 册检）。服务器不可达时整体 skip（CI 无 Temporal
+也能绿）；mock 只存在于测试内，生产 activity 存根保持 NotImplementedError。
 """
 
 from __future__ import annotations
@@ -15,8 +16,8 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from genpipe.models import GenBatchSpec, GenerationTaskSpec, TaskQueues
-from genpipe.workflows import GenBatchWorkflow, GenerationTaskWorkflow
+from genpipe.models import GenBatchSpec, GenerationTaskSpec, ReportComposeSpec, TaskQueues
+from genpipe.workflows import GenBatchWorkflow, GenerationTaskWorkflow, ReportComposeWorkflow
 from temporalio import activity
 from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 from temporalio.client import Client
@@ -87,7 +88,7 @@ async def _run_gen_batch(
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=[GenBatchWorkflow, GenerationTaskWorkflow],
+        workflows=[GenBatchWorkflow, GenerationTaskWorkflow, ReportComposeWorkflow],
         activities=_make_mock_activities(behaviors, log),
     )
     async with worker:
@@ -197,7 +198,7 @@ async def test_generation_task_atmosphere_chain_routes_and_gates() -> None:
     worker = Worker(
         client,
         task_queue=queue,
-        workflows=[GenBatchWorkflow, GenerationTaskWorkflow],
+        workflows=[GenBatchWorkflow, GenerationTaskWorkflow, ReportComposeWorkflow],
         activities=_make_mock_activities(behaviors, log),
     )
     async with worker:
@@ -219,3 +220,204 @@ async def test_generation_task_atmosphere_chain_routes_and_gates() -> None:
     realism_arg = log[1][1]
     assert realism_arg["base_render_artifact_id"] == "atm-1"
     assert log[2][1] == "real-1"
+
+
+# ---------------------------------------------------------------------------
+# 报告成文线（ReportComposeWorkflow）
+# ---------------------------------------------------------------------------
+
+# 报告数据包对编排是不透明载荷：夹具只需"是个包"，字段形状由 contracts schema 与
+# reportgen 侧负责——本仓不建模，故这里也不构造真包（camelCase 提示其生产方是 Java 求值线）
+OPAQUE_PACKAGE: dict[str, Any] = {
+    "domains": ["dom-lighting", "dom-budget"],
+    "anchors": [{"lkpId": "lkp-desk-height", "value": {"mm": 720}}],
+}
+
+
+def _report_spec(queue: str, domains: list[str], **overrides: Any) -> ReportComposeSpec:
+    queues = TaskQueues(
+        genpipe=queue, render2d=queue, imagegen=queue, render3d=queue, reportgen=queue
+    )
+    defaults: dict[str, Any] = {
+        "report_id": uuid.uuid4().hex,
+        "domains": domains,
+        "package": OPAQUE_PACKAGE,
+        "queues": queues,
+    }
+    defaults.update(overrides)
+    return ReportComposeSpec(**defaults)
+
+
+async def _run_report_compose(
+    client: Client, behaviors: dict[str, MockImpl], log: CallLog, spec: ReportComposeSpec
+) -> Any:
+    task_queue = spec.queues.reportgen
+    worker = Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[GenBatchWorkflow, GenerationTaskWorkflow, ReportComposeWorkflow],
+        activities=_make_mock_activities(behaviors, log),
+    )
+    async with worker:
+        return await client.execute_workflow(
+            ReportComposeWorkflow.run,
+            spec,
+            id=f"it-report-{spec.report_id}",
+            task_queue=task_queue,
+        )
+
+
+def _compose_unit(arg: Any) -> dict[str, Any]:
+    """单元成文 mock：按域回卡片；budget 域回一轮重写，供观测量断言。"""
+    domain = arg["domain"]
+    return {
+        "verdict": "ok",
+        "domain": domain,
+        "cards": [
+            {"thesis": f"{domain}-thesis", "body": "见 {lkp-desk-height}", "number_refs": []}
+        ],
+        "violations": [],
+        "rewrites_used": 1 if domain == "dom-budget" else 0,
+        "releases": [{"domain": domain, "release_tag": f"{domain}@v1"}],
+    }
+
+
+def _assemble_pages(arg: Any) -> dict[str, Any]:
+    """页面装配 mock：确定性按域成页（与 reportgen 首版口径一致）。"""
+    units = sorted(arg["units"], key=lambda u: u["domain"])
+    return {
+        "verdict": "ok",
+        "pages": [
+            {"page_id": f"page-{u['domain']}", "domain": u["domain"], "cards": u["cards"]}
+            for u in units
+        ],
+        "violations": [],
+    }
+
+
+def _report_behaviors(**overrides: MockImpl) -> dict[str, MockImpl]:
+    behaviors: dict[str, MockImpl] = {
+        "report-unit-compose": _compose_unit,
+        "report-page-assemble": _assemble_pages,
+        "report-book-check": lambda _: {"verdict": "ok", "violations": []},
+    }
+    behaviors.update(overrides)
+    return behaviors
+
+
+async def test_report_compose_fans_out_units_then_assembles_and_checks_book() -> None:
+    """主干：两域并行成文 → 装配 → 册检全过；报告数据包沿途原样透传（不透明载荷纪律）。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+    queue = f"it-{uuid.uuid4().hex}"
+    spec = _report_spec(queue, ["dom-lighting", "dom-budget"])
+    result = await _run_report_compose(client, _report_behaviors(), log, spec)
+
+    assert result.verdict == "ok"
+    assert result.failed_stage is None
+    assert [page["page_id"] for page in result.pages] == ["page-dom-budget", "page-dom-lighting"]
+    assert result.rewrite_rounds_by_domain == {"dom-lighting": 0, "dom-budget": 1}
+
+    dispatched = [name for name, _ in log]
+    # 单元并行（完成次序不定，只断言集合与计数），装配/册检严格在其后依次发生
+    assert dispatched.count("report-unit-compose") == 2
+    assert dispatched[-2:] == ["report-page-assemble", "report-book-check"]
+    unit_args = [arg for name, arg in log if name == "report-unit-compose"]
+    assert sorted(arg["domain"] for arg in unit_args) == ["dom-budget", "dom-lighting"]
+    assert all(arg["package"] == OPAQUE_PACKAGE for arg in unit_args)
+    assert all(arg["max_rewrites"] == 2 for arg in unit_args)
+    assert log[-1][1]["package"] == OPAQUE_PACKAGE  # 册检同样拿到原包
+
+
+async def test_report_compose_unit_failure_stops_before_assemble() -> None:
+    """某域 failed：整册失败，不装配也不出"其余页"——失败单元与其 violations 如实上抛。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+
+    def flaky_unit(arg: Any) -> dict[str, Any]:
+        if arg["domain"] != "dom-budget":
+            return _compose_unit(arg)
+        return {
+            "verdict": "failed",
+            "domain": "dom-budget",
+            "cards": [],
+            "violations": [{"check": "cr-budget-stale-price", "detail": "单价过期"}],
+            "rewrites_used": 2,
+            "releases": [],
+        }
+
+    queue = f"it-{uuid.uuid4().hex}"
+    spec = _report_spec(queue, ["dom-lighting", "dom-budget"])
+    result = await _run_report_compose(
+        client, _report_behaviors(**{"report-unit-compose": flaky_unit}), log, spec
+    )
+
+    assert result.verdict == "failed"
+    assert result.failed_stage == "unit-compose"
+    assert result.failed_domains == ["dom-budget"]
+    assert result.failed_units[0]["violations"] == [
+        {"check": "cr-budget-stale-price", "detail": "单价过期"}
+    ]
+    assert result.pages == []
+    assert result.rewrite_rounds_by_domain == {"dom-lighting": 0, "dom-budget": 2}
+    # 装配/册检一步都不派：下游本就以 gate-unit-failed 拒收，缺域的册在册检必然不合格
+    assert [name for name, _ in log] == ["report-unit-compose", "report-unit-compose"]
+
+
+async def test_report_compose_page_assemble_failure_surfaces_violations() -> None:
+    """装配 failed：违规原样上抛，册检不再派，pages 不回传。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+    assemble_violations = [{"check": "cr-one-thesis-per-page", "detail": "dom-budget 页双论点"}]
+    behaviors = _report_behaviors(
+        **{
+            "report-page-assemble": lambda _: {
+                "verdict": "failed",
+                "pages": [],
+                "violations": assemble_violations,
+            }
+        }
+    )
+    queue = f"it-{uuid.uuid4().hex}"
+    spec = _report_spec(queue, ["dom-lighting", "dom-budget"])
+    result = await _run_report_compose(client, behaviors, log, spec)
+
+    assert result.verdict == "failed"
+    assert result.failed_stage == "page-assemble"
+    assert result.violations == assemble_violations
+    assert result.failed_checks == []
+    assert result.pages == []
+    assert [name for name, _ in log].count("report-book-check") == 0
+
+
+async def test_report_compose_book_check_failure_withholds_pages() -> None:
+    """册检 failed：装配成功也不回内容——失败册不给 pages，杜绝"拿到就发布"的误用路径。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+    book_violations = [{"check": "gate-domain-page-missing", "detail": "dom-storage 无页"}]
+    behaviors = _report_behaviors(
+        **{"report-book-check": lambda _: {"verdict": "failed", "violations": book_violations}}
+    )
+    queue = f"it-{uuid.uuid4().hex}"
+    spec = _report_spec(queue, ["dom-lighting", "dom-budget"])
+    result = await _run_report_compose(client, behaviors, log, spec)
+
+    assert result.verdict == "failed"
+    assert result.failed_stage == "book-check"
+    assert result.violations == book_violations
+    assert result.pages == []
+    assert [name for name, _ in log][-1] == "report-book-check"
+
+
+async def test_report_compose_rejects_duplicate_domains_before_dispatch() -> None:
+    """同域派两次 → 装配出重复页 → 册检必挂：派发前就拦，省掉整轮 LLM 推理。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+    queue = f"it-{uuid.uuid4().hex}"
+    spec = _report_spec(queue, ["dom-lighting", "dom-lighting"])
+    result = await _run_report_compose(client, _report_behaviors(), log, spec)
+
+    assert result.verdict == "failed"
+    assert result.failed_stage == "unit-compose"
+    assert result.failed_checks == ["duplicate-domains"]
+    assert log == []

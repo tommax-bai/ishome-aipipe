@@ -1,12 +1,22 @@
-"""FastAPI 入站适配：排产/任务触发与批次查询（router → service 单向）。"""
+"""FastAPI 入站适配：排产/任务/成文线触发与批次查询（router → service 单向）。"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from genpipe.models import GenBatchSpec, GenerationTaskSpec, WorkflowStartReceipt
-from genpipe.service import get_batch_status, start_gen_batch, start_generation_task
+from genpipe.models import (
+    GenBatchSpec,
+    GenerationTaskSpec,
+    ReportComposeSpec,
+    WorkflowStartReceipt,
+)
+from genpipe.service import (
+    get_batch_status,
+    start_gen_batch,
+    start_generation_task,
+    start_report_compose,
+)
 
 router = APIRouter(prefix="/api/v1/genpipe")
 
@@ -25,6 +35,15 @@ async def create_task(spec: GenerationTaskSpec) -> WorkflowStartReceipt:
         return await start_generation_task(spec)
     except WorkflowAlreadyStartedError as err:
         raise HTTPException(status_code=409, detail=f"task 已启动：{spec.task_id}") from err
+
+
+@router.post("/reports", status_code=202)
+async def create_report(spec: ReportComposeSpec) -> WorkflowStartReceipt:
+    """成文线派发入口：求值线（project-svc）出报告数据包后调用，body 即 spec 原样透传。"""
+    try:
+        return await start_report_compose(spec)
+    except WorkflowAlreadyStartedError as err:
+        raise HTTPException(status_code=409, detail=f"report 已启动：{spec.report_id}") from err
 
 
 @router.get("/batches/{batch_id}")

@@ -13,8 +13,18 @@ from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 
 from genpipe import repo
-from genpipe.models import GenBatchSpec, GenerationTaskSpec, WorkflowStartReceipt
-from genpipe.workflows import WORKFLOW_TASK_QUEUE, GenBatchWorkflow, GenerationTaskWorkflow
+from genpipe.models import (
+    GenBatchSpec,
+    GenerationTaskSpec,
+    ReportComposeSpec,
+    WorkflowStartReceipt,
+)
+from genpipe.workflows import (
+    WORKFLOW_TASK_QUEUE,
+    GenBatchWorkflow,
+    GenerationTaskWorkflow,
+    ReportComposeWorkflow,
+)
 
 GENPIPE_NAMESPACE = "genpipe"
 
@@ -75,6 +85,24 @@ async def start_generation_task(spec: GenerationTaskSpec) -> WorkflowStartReceip
     )
     receipt = WorkflowStartReceipt(workflow_id=handle.id, run_id=handle.result_run_id or "")
     await repo.save_task_receipt(spec.task_id, receipt)
+    return receipt
+
+
+async def start_report_compose(spec: ReportComposeSpec) -> WorkflowStartReceipt:
+    """启动报告成文线 workflow（求值线出包后的派发入口，图 v0.2 §2）。
+
+    同样是启动即返回：成文是一次短 run，结论经回流写回 `svc_project` 的里程碑，
+    不在请求内等待（规则 8.1 状态真相不在编排侧）。
+    """
+    client = await get_temporal_client()
+    handle = await client.start_workflow(
+        ReportComposeWorkflow.run,
+        spec,
+        id=f"report-compose-{spec.report_id}",
+        task_queue=WORKFLOW_TASK_QUEUE,
+    )
+    receipt = WorkflowStartReceipt(workflow_id=handle.id, run_id=handle.result_run_id or "")
+    await repo.save_report_receipt(spec.report_id, receipt)
     return receipt
 
 

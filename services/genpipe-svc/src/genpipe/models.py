@@ -15,6 +15,13 @@ GateVerdict = Literal["passed", "regenerate", "switch_template", "failed"]
 GenerationTaskType = Literal["plan-2d-render", "atmosphere-visual", "scene-compile"]
 """交互侧生成任务类型：值与链路首个 activity 注册名同名（路由词表，只增不改）。"""
 
+ReportVerdict = Literal["ok", "failed"]
+"""成文线结论词表：与 reportgen activity 的 verdict 同词——编排侧只透传不改写。"""
+
+ReportStage = Literal["unit-compose", "page-assemble", "book-check"]
+"""成文线三阶段（图 v0.2 §2 流水线 / §4 校验三作用域）：值 = activity 注册名去 `report-`
+前缀，失败定位无需翻译表。"""
+
 
 class TaskQueues(BaseModel):
     """activity 派发队列路由。
@@ -28,6 +35,7 @@ class TaskQueues(BaseModel):
     render2d: str = "render2d-activities"
     imagegen: str = "imagegen-activities"
     render3d: str = "render3d-activities"
+    reportgen: str = "reportgen-activities"
 
 
 class GenBatchSpec(BaseModel):
@@ -91,6 +99,59 @@ class TaskStep(BaseModel):
     """payload 键 → 上游 activity 结果键：执行期把上游结果并入本步入参（arg 须为 dict）。"""
     long_running: bool = False
     """绘图/渲染类长跑 activity：派发时附加 heartbeat_timeout。"""
+
+
+class ReportComposeSpec(BaseModel):
+    """报告成文线一次生成的编排输入（求值线出包 → 派发成文线，图 v0.2 §2）。"""
+
+    report_id: str
+    """本次生成的定址 id：workflow_id 由其派生，重复派发即冲突上抛。里程碑真相在
+    `svc_project` 表，本 id 不承载状态（规则 8.1 禁第二台状态机）。"""
+    domains: list[str]
+    """本次派发的 dom- 单元集合，由求值线给出。**不从数据包里读**——数据包对编排是不透明
+    载荷；派发集与包内不符时由 activity 出 gate-domain-not-in-package，响亮失败不静默兜底。"""
+    package: dict[str, Any]
+    """报告数据包原样载荷：schema 归 contracts `rulebook/report_data_package.schema.json`，
+    本仓不建模其字段——数字在求值线已算完，成文线只搬运（图 v0.2 §0）。"""
+    max_rewrites: int = 2
+    """单元出口过检不合格后的重写轮数上限，随派发下发（图 v0.2 §3：≤2 轮，仍不过即 failed）。"""
+    queues: TaskQueues = Field(default_factory=TaskQueues)
+
+
+class UnitFanoutOutcome(BaseModel):
+    """各 dom- 单元并行成文的归并结果（纯数据，归并逻辑可直测）。"""
+
+    composed_units: list[dict[str, Any]] = Field(default_factory=list)
+    """verdict=ok 的单元结果，原样进装配——编排侧不拆包重组（避免在成文线复刻包结构）。"""
+    failed_domains: list[str] = Field(default_factory=list)
+    """失败单元的域：派发异常与 verdict=failed 两类合并归集，是"下次派哪些单元"的输入。"""
+    failed_units: list[dict[str, Any]] = Field(default_factory=list)
+    """verdict=failed 的单元结果原样保留：自带 domain 与本域 violations，回传即带归属。"""
+    dispatch_failures: list[str] = Field(default_factory=list)
+    """派发层失败码（activity 异常 / 结果形态违约）：无 activity 结论可透传时的兜底记录。"""
+    rewrite_rounds_by_domain: dict[str, int] = Field(default_factory=dict)
+    """各域实际重写轮数：出口过检拦截强度的观测量（规则 4.17 自迭代回路的输入信号）。"""
+
+
+class ReportComposeResult(BaseModel):
+    """报告成文线一次生成的结论（成功 = 三阶段全过）。"""
+
+    report_id: str
+    verdict: ReportVerdict
+    failed_stage: ReportStage | None = None
+    """失败发生在哪一阶段；verdict=ok 时为空。"""
+    pages: list[dict[str, Any]] = Field(default_factory=list)
+    """装配产物原样回传，**只在 verdict=ok 时非空**：失败册不回内容，杜绝调用方"拿到 pages
+    就发布"的误用路径；失败诊断走 failed_units / violations。"""
+    failed_domains: list[str] = Field(default_factory=list)
+    failed_units: list[dict[str, Any]] = Field(default_factory=list)
+    """单元级失败原样回传（各自带 violations）——图 v0.2 §4 三作用域之首。"""
+    violations: list[dict[str, Any]] = Field(default_factory=list)
+    """页级 / 册级违规原样回传（三作用域之二三）；单元级违规在 failed_units 内，
+    不并流以免丢掉域归属。"""
+    failed_checks: list[str] = Field(default_factory=list)
+    """编排层失败码（入参违约 / 派发异常 / 结果形态违约），与既有 workflow 同名同义。"""
+    rewrite_rounds_by_domain: dict[str, int] = Field(default_factory=dict)
 
 
 class WorkflowStartReceipt(BaseModel):

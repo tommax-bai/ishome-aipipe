@@ -2,7 +2,7 @@
 
 监听 workflow 专属队列 `genpipe-workflows`（服务内约定，非跨服务契约）；activity
 执行不在本进程——workflow 按 contracts `registries/task_queues.md` 把 activity 派往
-genpipe-worker 与三个绘图服务各自的队列。优雅停止：SIGINT / SIGTERM。
+genpipe-worker、三个绘图服务与 reportgen 各自的队列。优雅停止：SIGINT / SIGTERM。
 """
 
 from __future__ import annotations
@@ -15,7 +15,12 @@ from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
 
-from genpipe.workflows import WORKFLOW_TASK_QUEUE, GenBatchWorkflow, GenerationTaskWorkflow
+from genpipe.workflows import (
+    WORKFLOW_TASK_QUEUE,
+    GenBatchWorkflow,
+    GenerationTaskWorkflow,
+    ReportComposeWorkflow,
+)
 
 GENPIPE_NAMESPACE = "genpipe"
 
@@ -37,7 +42,7 @@ async def run_worker(address: str | None = None, namespace: str | None = None) -
     worker = Worker(
         client,
         task_queue=WORKFLOW_TASK_QUEUE,
-        workflows=[GenBatchWorkflow, GenerationTaskWorkflow],
+        workflows=[GenBatchWorkflow, GenerationTaskWorkflow, ReportComposeWorkflow],
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

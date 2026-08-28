@@ -1,4 +1,4 @@
-"""存取层：批次与任务启动记录（暂存内存；后续落 Postgres schema `svc_genpipe`，
+"""存取层：批次、任务与报告成文启动记录（暂存内存；后续落 Postgres schema `svc_genpipe`，
 禁止跨 schema join）。命名规范：get 必得 / find 可空 / list 集合 / count 计数。"""
 
 from __future__ import annotations
@@ -7,6 +7,8 @@ from genpipe.models import WorkflowStartReceipt
 
 _batch_receipts: dict[str, WorkflowStartReceipt] = {}
 _task_receipts: dict[str, WorkflowStartReceipt] = {}
+_report_receipts: dict[str, WorkflowStartReceipt] = {}
+"""成文线启动回执。报告的**里程碑真相在 svc_project 表**（规则 8.1），此处只留定址回执。"""
 
 
 async def save_batch_receipt(batch_id: str, receipt: WorkflowStartReceipt) -> None:
@@ -29,7 +31,16 @@ async def find_task_receipt(task_id: str) -> WorkflowStartReceipt | None:
     return _task_receipts.get(task_id)
 
 
+async def save_report_receipt(report_id: str, receipt: WorkflowStartReceipt) -> None:
+    _report_receipts[report_id] = receipt
+
+
+async def find_report_receipt(report_id: str) -> WorkflowStartReceipt | None:
+    return _report_receipts.get(report_id)
+
+
 def reset_receipts() -> None:
     """测试专用：清空内存暂存。"""
     _batch_receipts.clear()
     _task_receipts.clear()
+    _report_receipts.clear()
