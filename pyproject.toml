@@ -125,21 +125,24 @@ layers = ["router", "service", "repo", "models"]
 containers = ["genpipe", "chat"]
 
 [[tool.importlinter.contracts]]
-name = "worker 内 worker|floorplan_cli → activities → floorplan_parse → 三步件 → 确定性件 → models 单向"
+name = "worker 内 三个入口 → activities → floorplan_parse → 三步件 → 确定性件 → models 单向"
 type = "layers"
 # 两个顶层入口同层且互不可见（"|" = independent siblings）：`worker` 是 Temporal 入口，
 # `floorplan_cli` 是工具入口（户型图解析首版纯库 + CLI，接进 Temporal 的时点＝上传入口就绪时）。
 # 解析三步（勘测 / 逐块读图例 / 判定）里前两步同层互不可见——它们各自只对整图或一块图负责，
 # 谁也不该知道对方的 prompt；判定那一步在上面串起来。
+# `floorplan_geometry` 与它们同层，同一条理由的第三次应用：**几何不由 LLM 决定**——
+# 墙在哪儿、洞在哪儿、边界在哪儿全部从像素里算，它够不到网关客户端，所以"算得对不对"
+# 不是要人相信的话。三个 CLI 入口同层互不可见（各自是一件工具的全部）。
 # `orientation` 与 `layout_features` 与 `llm_client` 同层互不可见，是两件事的代码形态：
 # **朝向换算与闭集校验都不碰模型调用**——它们若能碰到网关客户端，"没调模型时算得对不对/
 # 校验成不成立"就成了要人相信的话，而这两件恰恰是为了不必相信才搬进代码的。
 layers = [
-  "worker | floorplan_cli",
+  "worker | floorplan_cli | floorplan_geometry_cli",
   "activities",
   "floorplan_parse",
   "floorplan_survey | floorplan_regions",
-  "orientation | llm_client | layout_features",
+  "orientation | llm_client | layout_features | floorplan_geometry",
   "models",
 ]
 containers = ["genpipe_worker"]
@@ -152,6 +155,7 @@ forbidden_modules = [
   "genpipe_worker.models",
   "genpipe_worker.layout_features",
   "genpipe_worker.orientation",
+  "genpipe_worker.floorplan_geometry",
   "genpipe_worker.floorplan_parse",
   "genpipe_worker.floorplan_survey",
   "genpipe_worker.floorplan_regions",
@@ -169,6 +173,7 @@ source_modules = ["genpipe_worker.layout_features"]
 forbidden_modules = [
   "genpipe_worker.models",
   "genpipe_worker.llm_client",
+  "genpipe_worker.floorplan_geometry",
   "genpipe_worker.floorplan_parse",
   "genpipe_worker.floorplan_survey",
   "genpipe_worker.floorplan_regions",
@@ -186,6 +191,7 @@ source_modules = ["genpipe_worker.orientation"]
 forbidden_modules = [
   "genpipe_worker.llm_client",
   "genpipe_worker.layout_features",
+  "genpipe_worker.floorplan_geometry",
   "genpipe_worker.floorplan_parse",
   "genpipe_worker.floorplan_survey",
   "genpipe_worker.floorplan_regions",
@@ -194,6 +200,25 @@ forbidden_modules = [
   "genpipe_worker.floorplan_cli",
   "httpx",
   "PIL",
+  "temporalio",
+]
+
+[[tool.importlinter.contracts]]
+name = "几何提取纯确定性：floorplan_geometry 不碰模型调用、不碰网络——几何不由 LLM 决定"
+type = "forbidden"
+source_modules = ["genpipe_worker.floorplan_geometry"]
+forbidden_modules = [
+  "genpipe_worker.llm_client",
+  "genpipe_worker.layout_features",
+  "genpipe_worker.orientation",
+  "genpipe_worker.floorplan_parse",
+  "genpipe_worker.floorplan_survey",
+  "genpipe_worker.floorplan_regions",
+  "genpipe_worker.activities",
+  "genpipe_worker.worker",
+  "genpipe_worker.floorplan_cli",
+  "genpipe_worker.floorplan_geometry_cli",
+  "httpx",
   "temporalio",
 ]
 

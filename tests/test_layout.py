@@ -38,6 +38,9 @@ ALLOWED_VERTICAL_FILES = {
     "floorplan_survey.py",  # 勘测一步：整图定位每个房间的区域 + 窗墙 + 指北针，不下结论
     "floorplan_regions.py",  # 确定性裁剪放大 + 逐块读图例（剪刀在代码手里，不在模型手里）
     "orientation.py",  # 朝向换算，纯确定性——方位与数字同族，都不由 LLM 决定
+    # 2026-08-30 晚 几何提取评审通过（都有 import-linter 方向契约）：
+    "floorplan_geometry.py",  # 墙线/门窗洞/房间遮罩，纯确定性——几何与方位、数字同族
+    "floorplan_geometry_cli.py",  # 工具入口，与另两个入口同层互不可见（--survey 可零调用复跑）
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：

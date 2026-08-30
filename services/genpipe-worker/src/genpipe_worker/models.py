@@ -17,6 +17,11 @@ contracts 报告数据包的 `anonymousProfile.layoutFeatures`（Jackson 口径�
 房间在图上的区域 + 窗开在哪面墙 + 指北针指向）、`RoomLegend`（每块裁剪放大后读到的图例）、
 `RoomOrientation`（**代码换算**出来的朝向）。三者都是解析器内部形态，**不下发**——
 下发面只有 `FloorplanFeatures`。
+
+几何提取（2026-08-30 晚落地，用户裁决"先出图"的第一道门）另起一族：`PlanWall` / `PlanOpening`
+/ `RoomOutline` / `FloorplanGeometry`。它们与特征那一族**互不相干**——特征回答"这户型有什么
+值得讲的"，几何回答"墙和房间在哪儿"，前者喂报告、后者喂母版。几何全部是**归一化坐标，
+没有任何绝对尺寸**：比例尺服务的是报告里的数字，出图只要相对关系对（追记七 §八-3）。
 """
 
 from __future__ import annotations
@@ -33,6 +38,12 @@ PageSide = Literal["top", "bottom", "left", "right"]
 方位由代码算**（`orientation` 模块）——同"数字不由 LLM 决定"，方位也不由 LLM 决定。
 真跑证据：让模型自己推时，同一张图的主卧朝向出过"西南/南/西"三个答案，
 因为它每次都在现场心算、每次推的路径都不一样。
+"""
+
+
+PlanAxis = Literal["vertical", "horizontal"]
+"""墙线轴向。户型图的墙绝大多数正交于图面，母版按轴对齐画——斜墙不在首版射程内，
+遇到斜墙时轴对齐提取会把它读成阶梯状，**时点写死＝拿到第一张带斜墙的样本时另立一项**。
 """
 
 
@@ -139,6 +150,75 @@ class RoomOrientation(_FloorplanModel):
     room: str
     window_walls: list[PageSide] = Field(default_factory=list)
     facings: list[str] = Field(default_factory=list)
+
+
+class PlanWall(_FloorplanModel):
+    """母版上的一段墙：轴向、所在位置、起讫，全部归一化到整图（0~1，左上角为原点）。
+
+    与 :class:`RoomRegion.box` 同一套坐标系是刻意的——房间标注要落到房间遮罩的质心上
+    （交接文档追记一的三层保障之一），两边坐标系不同就得来回换算，换算就有错的机会。
+
+    `axis` 为 `vertical` 时 `position_ratio` 是 x、`start_ratio`/`end_ratio` 是 y 的起讫；
+    `horizontal` 时反过来。`thickness_ratio` 是墙厚（承重墙与隔墙在图上厚度不同，母版要照画）。
+    """
+
+    axis: PlanAxis
+    position_ratio: float
+    start_ratio: float
+    end_ratio: float
+    thickness_ratio: float
+
+
+class PlanOpening(_FloorplanModel):
+    """墙线上的一个洞：门、窗、或没有门扇的过口。坐标口径同 :class:`PlanWall`。
+
+    **这一层不区分门和窗，只区分洞在外墙还是内墙**（`is_on_outer_wall`）——图上门与窗的
+    画法各家不同，而"洞的一侧在户型轮廓之外"是确定性可判的。要门窗之分得再走一步识别，
+    时点写死＝母版要画门扇与窗框那一批（本步只出坐标，画法归 render2d）。
+
+    洞宽是 `门洞反标定` 那一级标定物的输入（拍板清单 §〇 2026-08-30 标定四级的第三级）：
+    结构件按图纸画、分布窄、不需任何图外信息。**本模块不做标定**，只把洞的尺寸如实给出去——
+    比例尺是报告里数字的事，出图不需要（追记七 §八-3）。
+    """
+
+    axis: PlanAxis
+    position_ratio: float
+    start_ratio: float
+    end_ratio: float
+    is_on_outer_wall: bool
+
+
+class RoomOutline(_FloorplanModel):
+    """一个房间在母版上占的地方：若干个矩形块拼起来（房间不一定是矩形，L 形很常见）。
+
+    `boxes` 拼起来就是**房间遮罩**——生成图的条件控制用它，房间标注的锚点也用它
+    （质心算锚点是几何计算不是估计，交接文档追记一）。
+    `area_ratio` 是这个房间占户型内部自由面积的比例，**不是面积**：
+    要得到面积得先有比例尺，而比例尺这一步不做（同 :class:`PlanOpening` 的口径）。
+    """
+
+    name: str
+    boxes: list[tuple[float, float, float, float]] = Field(default_factory=list)
+    area_ratio: float = 0.0
+    centroid: tuple[float, float] = (0.0, 0.0)
+
+
+class FloorplanGeometry(_FloorplanModel):
+    """一张户型图的几何提取产物：轮廓、墙、洞、房间遮罩。**没有任何绝对尺寸**。
+
+    这是母版（`plan_master`，render2d 的产物）的唯一几何来源。本模块只出坐标，
+    怎么画归 render2d——独立仓的分界在这里，不在这里画一张"差不多的"图。
+
+    `cell_coverage_ratio` 是自证数：房间格拼起来占户型内部自由面积的比例。
+    它是"各房间面积之和 ≈ 图内轮廓面积"那道免费自检的具体形态（拍板清单 §〇 2026-08-30）——
+    对不上就是边界提取有问题，**响亮失败**，不把没把握的结构往下游传（红线一）。
+    """
+
+    plan_box: tuple[float, float, float, float]
+    walls: list[PlanWall] = Field(default_factory=list)
+    openings: list[PlanOpening] = Field(default_factory=list)
+    rooms: list[RoomOutline] = Field(default_factory=list)
+    cell_coverage_ratio: float = 0.0
 
 
 class FeatureVerdict(_FloorplanModel):
