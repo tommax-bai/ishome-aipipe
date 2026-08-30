@@ -1,0 +1,50 @@
+{
+  "image": {
+    "path": "services/genpipe-worker/samples/floorplan-brochure-92sqm-3b2l1b.png",
+    "sha256": "e2a41bfefa2488a157e2335baeb5255306bb43b0c0f014fc86e729e9b4fea514",
+    "bytes": 662040
+  },
+  "logicalModel": "floorplan-parse.default",
+  "rawOutput": "{\n  \"layoutFeatures\": {\n    \"balcony_service\": \"阳台区域图中画有洗衣机与柜体示意虚线框，表明设家政功能位\"\n  },\n  \"observations\": [\n    {\n      \"subject\": \"阳台\",\n      \"finding\": \"图中阳台内以虚线框标出洗衣机与储物柜位置，属生活功能布置\"\n    },\n    {\n      \"subject\": \"指北针\",\n      \"finding\": \"图右下角有指北针，明确上北下南左西右东\"\n    },\n    {\n      \"subject\": \"主卧朝向\",\n      \"finding\": \"主卧位于户型左下方，根据指北针判断其主要采光面朝南偏西，非正东\"\n    },\n    {\n      \"subject\": \"厨房形状\",\n      \"finding\": \"厨房为L形布局，仅三面设台面，未形成U形围合\"\n    },\n    {\n      \"subject\": \"西晒空间\",\n      \"finding\": \"次卧、客厅西侧外墙有飘窗，但图中无任何文字或符号标注‘西晒’或日照强度信息\"\n    }\n  ],\n  \"unreadable\": [\n    {\n      \"subject\": \"bedroom_east_facing\",\n      \"reason\": \"主卧主要开窗面朝南偏西，图中无东向窗户或东向采光标识；指北针可判方向，但无证据显示主卧东向\"\n    },\n    {\n      \"subject\": \"kitchen_u_shape\",\n      \"reason\": \"厨房为L形，仅三面连续操作台，缺少U形所需的第三侧封闭台面，图中未画出\"\n    },\n    {\n      \"subject\": \"west_facing\",\n      \"reason\": \"虽有西向外墙（如次卧、客厅西侧飘窗），但图中未标注‘西晒’‘西向’等文字，也无日照箭头、阴影等示意，无法确认该空间被定义为‘西晒’\"\n    }\n  ]\n}",
+  "product": {
+    "layoutFeatures": {
+      "balcony_service": "阳台区域图中画有洗衣机与柜体示意虚线框，表明设家政功能位"
+    },
+    "observations": [
+      {
+        "subject": "阳台",
+        "finding": "图中阳台内以虚线框标出洗衣机与储物柜位置，属生活功能布置"
+      },
+      {
+        "subject": "指北针",
+        "finding": "图右下角有指北针，明确上北下南左西右东"
+      },
+      {
+        "subject": "主卧朝向",
+        "finding": "主卧位于户型左下方，根据指北针判断其主要采光面朝南偏西，非正东"
+      },
+      {
+        "subject": "厨房形状",
+        "finding": "厨房为L形布局，仅三面设台面，未形成U形围合"
+      },
+      {
+        "subject": "西晒空间",
+        "finding": "次卧、客厅西侧外墙有飘窗，但图中无任何文字或符号标注‘西晒’或日照强度信息"
+      }
+    ],
+    "unreadable": [
+      {
+        "subject": "bedroom_east_facing",
+        "reason": "主卧主要开窗面朝南偏西，图中无东向窗户或东向采光标识；指北针可判方向，但无证据显示主卧东向"
+      },
+      {
+        "subject": "kitchen_u_shape",
+        "reason": "厨房为L形，仅三面连续操作台，缺少U形所需的第三侧封闭台面，图中未画出"
+      },
+      {
+        "subject": "west_facing",
+        "reason": "虽有西向外墙（如次卧、客厅西侧飘窗），但图中未标注‘西晒’‘西向’等文字，也无日照箭头、阴影等示意，无法确认该空间被定义为‘西晒’"
+      }
+    ]
+  }
+}

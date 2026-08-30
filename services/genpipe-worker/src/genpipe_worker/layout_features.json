@@ -1,0 +1,33 @@
+{
+  "$comment": "户型特征标记闭集的机器可读投影（layout_feature 触发字段）。与 layout_features.md 同源，md 是叙事权威。匹配语义＝键存在即触发；map 的值是依据留痕不参与匹配。只增不改；新增标记必须与消费它的规则同批提交（先有规则后有标记）。",
+  "features": {
+    "west_facing": {
+      "meaning": "该空间西晒",
+      "consumedBy": [
+        "rule-practice-material-glossy-stone-west-sun"
+      ],
+      "domain": "material"
+    },
+    "kitchen_u_shape": {
+      "meaning": "厨房为 U 形",
+      "consumedBy": [
+        "rule-practice-ergo-dual-cook-width"
+      ],
+      "domain": "ergonomics"
+    },
+    "bedroom_east_facing": {
+      "meaning": "主卧东向",
+      "consumedBy": [
+        "rule-personal-softdeco-blackout-by-orientation"
+      ],
+      "domain": "softdeco"
+    },
+    "balcony_service": {
+      "meaning": "阳台带家政/生活功能位",
+      "consumedBy": [
+        "rule-practice-storage-balcony-cleaning"
+      ],
+      "domain": "storage"
+    }
+  }
+}

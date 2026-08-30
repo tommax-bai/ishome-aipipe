@@ -31,6 +31,32 @@ tests/              # 工作区级守门测试（activity 注册名一致性、�
 - **activity 注册名只增不改**，唯一真源 ishome-contracts `activities/registry.md`；本仓 `tests/test_activity_registry.py` 与其保持逐字一致。
 - **报告成文线**（`ReportComposeWorkflow`，图 v0.2 §2）：各 dom- 单元并行成文 → 页面装配 → 册级校验，三个 activity 全部派往 `reportgen-activities`（实现在 ishome-reportgen）。数字在求值线（project-svc 规则引擎）算完，报告数据包对本仓是**不透明载荷**（schema 归 contracts `rulebook/`，本仓不建模其字段）；任一域失败即整册失败，不出"其余页"。
 
+## 户型图解析（`floorplan-parse`，genpipe-worker）
+
+一张户型图 → **户型特征标记 + 依据**，喂报告求值线的 `layoutFeatures`（口子早就留好、一直传空）。
+
+**形态（2026-08-30，同渲染层先例）**：不成 activity，以工具（纯库 + CLI）形式存在；
+`floorplan-parse` 的 activity 存根保持不动，**接线时点写死＝上传入口就绪时**——那时图落私有 OSS、
+activity 拿到的是资产键，与现在的本地文件入参不是一回事。
+
+```bash
+LITELLM_API_KEY=$LITELLM_MASTER_KEY uv run floorplan-parse \
+  --image services/genpipe-worker/samples/floorplan-brochure-92sqm-3b2l1b.png \
+  --gateway http://127.0.0.1:4001/v1 -o reading.json
+```
+
+- 产出三段：`layoutFeatures`（**键 ⊆ 契约闭集**，值＝这条标记成立的依据）、`observations`
+  （闭集外的观察，**记录但不下发**——下发闭集外的键等于宣称有规则会用它）、`unreadable`
+  （读不出的东西，响亮说明不留空）；
+- **闭集校验是硬门禁**：越界键、空依据、依据里的量纲数字/标准号/否定句，任一命中即**响亮失败
+  并报出是哪个键**（退出码 3），不修剪不静默——键写错就永远不触发且不报错是本项目最贵的失效形态；
+- **这一步不出任何数字**：尺寸/面积/比例要等比例标定链路，且算术由确定性代码做不由模型做；
+- 模型经 LiteLLM 网关按逻辑名调用；**改了网关配置要重启才认新逻辑名**，而 4000 是常驻网关
+  ——真跑另起临时端口（`ishome-infra/litellm/run-dev.sh 4001`）跑完即停。
+
+真跑留档（含被否的两个候选模型、两步读为什么撤回、"把闭集当逐条打勾的清单填"这个失败形态）：
+`_iteration/run-2026-08-30-floorplan-features/run.md`。
+
 ## chat-svc 会话存储（svc_chat）
 
 - 迁移：`CHAT_DATABASE_URL=postgresql://... uv run chat-migrate`——纯 SQL 迁移在

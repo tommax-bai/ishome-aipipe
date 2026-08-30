@@ -7,13 +7,17 @@ dependencies = [
   "ishome-contracts",
   "temporalio>=1.8",
   "pydantic>=2.9",
+  "httpx>=0.27",
   "adapters",
   "scoring",
 ]
 
 # 纵切入口：`uv run genpipe-worker` 启动 activity worker（监听 genpipe-activities）
+# 工具入口：`uv run floorplan-parse --image 户型图.png` 户型图解析（首版纯库 + CLI，同渲染层先例；
+#           接进 Temporal 的时点写死＝上传入口就绪时，在此之前 floorplan-parse activity 存根不动）
 [project.scripts]
 genpipe-worker = "genpipe_worker.worker:main"
+floorplan-parse = "genpipe_worker.floorplan_cli:main"
 
 [tool.uv.sources]
 ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }

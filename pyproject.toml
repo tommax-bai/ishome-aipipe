@@ -125,10 +125,50 @@ layers = ["router", "service", "repo", "models"]
 containers = ["genpipe", "chat"]
 
 [[tool.importlinter.contracts]]
-name = "worker 内 worker → activities → models 单向"
+name = "worker 内 worker|floorplan_cli → activities → floorplan_parse → llm_client|layout_features → models 单向"
 type = "layers"
-layers = ["worker", "activities", "models"]
+# 两个顶层入口同层且互不可见（"|" = independent siblings）：`worker` 是 Temporal 入口，
+# `floorplan_cli` 是工具入口（户型图解析首版纯库 + CLI，接进 Temporal 的时点＝上传入口就绪时）。
+# `llm_client` 与 `layout_features` 同层互不可见，是"**闭集校验与模型调用无关**"的代码形态：
+# 校验若能碰到网关客户端，"没调模型时校验还成不成立"就成了一句要人相信的话。
+layers = [
+  "worker | floorplan_cli",
+  "activities",
+  "floorplan_parse",
+  "llm_client | layout_features",
+  "models",
+]
 containers = ["genpipe_worker"]
+
+[[tool.importlinter.contracts]]
+name = "genpipe_worker 出站边缘 llm_client 不感知上层：只依赖运行库（模型轴 R7 一轴一层）"
+type = "forbidden"
+source_modules = ["genpipe_worker.llm_client"]
+forbidden_modules = [
+  "genpipe_worker.models",
+  "genpipe_worker.layout_features",
+  "genpipe_worker.floorplan_parse",
+  "genpipe_worker.activities",
+  "genpipe_worker.worker",
+  "genpipe_worker.floorplan_cli",
+  "temporalio",
+  "fastapi",
+]
+
+[[tool.importlinter.contracts]]
+name = "闭集校验纯确定性：layout_features 不碰网络、不碰模型调用、不感知上层"
+type = "forbidden"
+source_modules = ["genpipe_worker.layout_features"]
+forbidden_modules = [
+  "genpipe_worker.models",
+  "genpipe_worker.llm_client",
+  "genpipe_worker.floorplan_parse",
+  "genpipe_worker.activities",
+  "genpipe_worker.worker",
+  "genpipe_worker.floorplan_cli",
+  "httpx",
+  "temporalio",
+]
 
 [[tool.importlinter.contracts]]
 name = "跨 domain 数据属主唯一：chat 禁触 genpipe 内部（只许经对方 service）"

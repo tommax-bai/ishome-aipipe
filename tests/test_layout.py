@@ -29,6 +29,11 @@ ALLOWED_VERTICAL_FILES = {
     "orchestrator.py",  # 服务层助手：Design Orchestrator（§5.1），只依赖 models 与协议位
     # 2026-08-23 会话存储落库评审通过：
     "migrate.py",  # 迁移执行器边缘（chat-migrate 入口，纯 SQL 迁移；import-linter 契约禁触上层）
+    # 2026-08-30 户型图解析评审通过（首版纯库 + CLI，同渲染层先例）；三件都有 import-linter
+    # 方向契约。llm_client.py 不新增——genpipe_worker 的出站边缘与 chat 同名同角色，复用上面那条。
+    "floorplan_cli.py",  # 工具入口，与 worker 同层互不可见（接 Temporal 的时点＝上传入口就绪时）
+    "floorplan_parse.py",  # 解析编排：prompt 组装 / 模型输出解析 / 过产出侧校验
+    "layout_features.py",  # 户型特征标记闭集（契约副本）加载与产出侧校验，纯确定性
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：
