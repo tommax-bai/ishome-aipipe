@@ -58,7 +58,8 @@ async def _run(args: argparse.Namespace) -> int:
             image_bytes, media_type, client, logical_model=args.model
         )
     except LayoutFeatureViolation as e:
-        # 硬门禁：产出的标记不合契约。报出**是哪个键**，不修剪不降级。
+        # 硬门禁：标记名越界（判定层，不论判成立与否）或产物不合契约。
+        # 报出**是哪个键**，不修剪不降级。
         print("闭集校验不通过（fail loud，不剔除不静默）：", file=sys.stderr)
         for line in e.details:
             print(f"  - {line}", file=sys.stderr)
@@ -78,6 +79,9 @@ async def _run(args: argparse.Namespace) -> int:
         },
         "logicalModel": reading.logical_model,
         "rawOutput": reading.raw_output,
+        # 逐条判定随档：没成立的那几条也是数据（为什么判不成立＝下一轮改判据/改读图方式的素材），
+        # 投影之后就看不见了。
+        "verdicts": [v.model_dump(by_alias=True) for v in reading.verdicts],
         "product": features.model_dump(by_alias=True),
     }
     if args.out is not None:
@@ -85,7 +89,10 @@ async def _run(args: argparse.Namespace) -> int:
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
 
-    print(f"特征标记（{len(features.layout_features)} 条，均在闭集内）：")
+    print(f"逐条判定（{len(reading.verdicts)} 条候选，模型逐条作答）：")
+    for verdict in sorted(reading.verdicts, key=lambda v: (not v.holds, v.feature)):
+        print(f"  [{'成立' if verdict.holds else '不成立'}] {verdict.feature} ← {verdict.evidence}")
+    print(f"下发的特征标记（{len(features.layout_features)} 条，投影自判成立的那些）：")
     for name, evidence in sorted(features.layout_features.items()):
         print(f"  {name} ← {evidence}")
     if not features.layout_features:

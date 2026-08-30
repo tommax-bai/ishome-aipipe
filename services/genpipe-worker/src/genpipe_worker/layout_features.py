@@ -1,8 +1,17 @@
-"""户型特征标记闭集：加载 + 解析产出侧校验（契约 `rulebook/layout_features.md` §四 第一行）。
+"""户型特征标记闭集：加载 + 两层校验（契约 `rulebook/layout_features.md` §四）。
 
 **没有这道校验，键写错就是永远不触发且不报错**——本项目最贵的失效形态（同"判据入册 ≠ 有执行器"）。
-故本模块是纯确定性的：不依赖模型调用、不依赖网络、不依赖产物模型，只吃 map 出判定
+故本模块是纯确定性的：不依赖模型调用、不依赖网络、不依赖产物模型，只吃名字与 map 出判定
 （依赖方向由 import-linter 锁死）。
+
+**校验分两层，对应解析的两层**（2026-08-30 改造）：
+
+- :func:`check_feature_names` 作用在**模型输出层的逐条判定**上，只管名字 ⊆ 闭集，
+  **不论这条判成立还是不成立**——`holds=False` 的越界名同样说明模型在编造标记名；
+- :func:`check_features` 作用在**投影后的产物**上，管要下发的那些标记干不干净。
+
+名字越界前移到判定层，是因为那才是它发生的地方；产物层照旧再查一遍名字，拦的是投影这段
+代码自己写错（两道不是重复，是两个失效源各一道）。
 
 闭集真源在 ishome-contracts `rulebook/layout_features.json`；本仓持一份**逐字副本**
 （`layout_features.json`，与本模块同目录），两处不一致时以 contracts 仓为准并回改此处——
@@ -19,7 +28,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 CLOSED_SET_FILE = Path(__file__).with_name("layout_features.json")
@@ -31,7 +40,7 @@ class LayoutFeatureSetError(Exception):
 
 
 class LayoutFeatureViolation(Exception):
-    """产出的标记不合契约：越界键、空依据、否定句依据、依据里的量纲数字或标准号。
+    """标记不合契约：越界名（判定层或产物层）、空依据、自相矛盾的依据、量纲数字、标准号。
 
     ``details`` 逐条给出人话，CLI 与 activity 都原样上报——响亮失败要报得出**是哪个键**，
     只说"校验不通过"等于没报。
@@ -61,29 +70,45 @@ def load_closed_set(path: Path | None = None) -> dict[str, str]:
     return closed_set
 
 
-def check_features(features: Mapping[str, str], closed_set: Mapping[str, str]) -> None:
-    """产出侧四道校验，任一不过抛 :class:`LayoutFeatureViolation`：
+def check_feature_names(names: Iterable[str], closed_set: Mapping[str, str]) -> None:
+    """判定层校验：逐条判定里的标记名 ⊆ 闭集，**不论 holds 真假**。
 
-    1. **键 ⊆ 闭集**（契约 §四）——本项目最贵的失效形态是键写错后永远不触发且不报错；
+    `holds=False` 的越界名不是"反正不会下发所以无害"——它说明模型在编造闭集里没有的标记名，
+    而下一次它可能把同一个名字判成成立。名字这件事在这里拦，比等到投影之后再拦更接近现场。
+
+    不做修剪、不做丢弃——静默剔除越界名等于把"解析侧在编造标记"这件事藏起来。
+    """
+    details = [
+        f"越界标记 `{name}`：不在闭集内（闭集＝{'、'.join(sorted(closed_set))}）"
+        "——闭集外的东西进观察区，扩集要与消费它的规则同批提交"
+        for name in sorted(set(names))
+        if name not in closed_set
+    ]
+    if details:
+        raise LayoutFeatureViolation(details)
+
+
+def check_features(features: Mapping[str, str], closed_set: Mapping[str, str]) -> None:
+    """产物层校验（作用在投影后、要下发的那些标记上），任一不过抛 :class:`LayoutFeatureViolation`：
+
+    1. **键 ⊆ 闭集**（契约 §四）——名字越界主要由 :func:`check_feature_names` 在判定层拦，
+       这里再查一遍拦的是投影代码自己写错；本项目最贵的失效形态是键写错后永远不触发且不报错；
     2. **依据非空**——"标记成立但说不出为什么"是编造的入口；
-    2b. **依据不是否定句**——匹配语义是"键存在即触发"，下游只看键在不在、**根本不读依据**；
-       模型把闭集当成逐条打勾的清单填（依据写"非 U 形""无法判定"）时，四条规则会带着
-       否定的理由全部触发。这是真跑里出现过两次的形态（2026-08-30，两步读与单次读各一次），比误报更贵；
-    3. **依据里没有量纲数字、没有标准号**——依据会随触发的规则下发到报告里当"因为你家……"
+    3. **依据不自相矛盾**——投影进来的都是 `holds=True` 的，依据却在说"判不准""不成立"
+       "图上没画"，那这条判定本身是坏的：`holds` 与 `evidence` 各说各话时，下游只看键在不在，
+       会按"成立"用它。这道 2026-08-30 立案时是拦"把闭集当逐条打勾的清单填"的最后一关；
+       判定层给了"否"一个合法位置之后，它的职责收窄为自相矛盾检查；
+    4. **依据里没有量纲数字、没有标准号**——依据会随触发的规则下发到报告里当"因为你家……"
        的可追溯来源，模型自己写的尺寸/面积/比例混进去就等于报告里出现了 LLM 决定的数字
        （红线）；标准号则从来不会画在户型图上，出现即编造。这几条 prompt 里都说了，
        但 prompt 是第一道不是门禁，机检才是。
-
-    不做修剪、不做丢弃——静默剔除越界键等于把"解析侧在编造标记"这件事藏起来，
-    而下游报告求值线读到的是剔除后的结果，问题永远浮不出来。
     """
     details: list[str] = []
     for name in sorted(features):
         if name not in closed_set:
             details.append(
                 f"越界标记 `{name}`：不在闭集内（闭集＝{'、'.join(sorted(closed_set))}）"
-                "——下发闭集外的键等于宣称有规则会用它，那是假的；"
-                "闭集外的东西进观察区，扩集要与消费它的规则同批提交"
+                "——投影后仍出现越界键，说明投影这段代码本身有问题"
             )
             continue
         evidence = features[name]
@@ -110,10 +135,11 @@ _NEGATED_EVIDENCE_RE = re.compile(
     r"|不成立|不满足|不构成|不符合|不适用|不属于|并非|不是|非[UuＵ]\s*形"  # 判为不成立
     r"|未画|未标|未设|未见|未提供|未标注|无任何|没有任何"  # 说"图上没有"
 )
-"""否定/不确定措辞：这些出现在依据里，说的是"这条标记不成立"，而键写上去等于说它成立。
+"""否定/不确定措辞。投影进产物的都是判成立的，依据却是这三族之一＝这条判定自相矛盾。
 
-真跑里模型两次把闭集当逐条打勾的清单填（2026-08-30），依据写的正是"未画出洗衣机位"
-"无法判定是否西晒"这一类——所以三族都收：判不准、判为不成立、说图上没有。
+三族分别是：判不准、判为不成立、说图上没有。措辞取自 2026-08-30 真跑里模型写过的原话
+（"未画出洗衣机位""无法判定是否西晒"）——那一版结构里没有"否"的位置，模型只能这么写；
+现在有了，再出现就说明 `holds` 与 `evidence` 各说各话。
 
 **不收单个"无/未/没有"**：`阳台与客厅之间无隔墙` 是描述图面的正当依据，一竿子打死会把
 真依据也拦掉；收的是"未+动词"与"无任何"这种明确在说"图上不存在"的构造。
@@ -125,9 +151,8 @@ def _evidence_violations(name: str, evidence: str) -> list[str]:
     negated = _NEGATED_EVIDENCE_RE.search(evidence)
     if negated is not None:
         violations.append(
-            f"标记 `{name}` 的依据是否定句（出现「{negated.group(0)}」）："
-            "匹配语义是键存在即触发、下游不读依据，"
-            "所以不成立的标记根本不该出现在这里——理由写进读不出区"
+            f"标记 `{name}` 判成立、依据却在说它不成立（出现「{negated.group(0)}」）："
+            "判定与依据自相矛盾，而下游只看键在不在、不读依据，会按成立用它"
         )
     measured = _MEASURED_NUMBER_RE.search(evidence)
     if measured is not None:
