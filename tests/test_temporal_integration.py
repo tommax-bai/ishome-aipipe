@@ -236,7 +236,12 @@ OPAQUE_PACKAGE: dict[str, Any] = {
 
 def _report_spec(queue: str, domains: list[str], **overrides: Any) -> ReportComposeSpec:
     queues = TaskQueues(
-        genpipe=queue, render2d=queue, imagegen=queue, render3d=queue, reportgen=queue
+        genpipe=queue,
+        render2d=queue,
+        imagegen=queue,
+        render3d=queue,
+        reportgen=queue,
+        reportrender=queue,
     )
     defaults: dict[str, Any] = {
         "report_id": uuid.uuid4().hex,
@@ -300,13 +305,18 @@ def _report_behaviors(**overrides: MockImpl) -> dict[str, MockImpl]:
         "report-unit-compose": _compose_unit,
         "report-page-assemble": _assemble_pages,
         "report-book-check": lambda _: {"verdict": "ok", "violations": []},
+        "report-book-render": lambda arg: {
+            "verdict": "ok",
+            "book_key": f"reports/{arg['report_id']}/book.html",
+            "violations": [],
+        },
     }
     behaviors.update(overrides)
     return behaviors
 
 
-async def test_report_compose_fans_out_units_then_assembles_and_checks_book() -> None:
-    """主干：两域并行成文 → 装配 → 册检全过；报告数据包沿途原样透传（不透明载荷纪律）。"""
+async def test_report_compose_fans_out_units_then_assembles_checks_and_renders() -> None:
+    """主干：两域并行成文 → 装配 → 册检 → 出册全过；报告数据包沿途原样透传（不透明载荷纪律）。"""
     client = await _client_or_skip()
     log: CallLog = []
     queue = f"it-{uuid.uuid4().hex}"
@@ -321,12 +331,15 @@ async def test_report_compose_fans_out_units_then_assembles_and_checks_book() ->
     dispatched = [name for name, _ in log]
     # 单元并行（完成次序不定，只断言集合与计数），装配/册检严格在其后依次发生
     assert dispatched.count("report-unit-compose") == 2
-    assert dispatched[-2:] == ["report-page-assemble", "report-book-check"]
+    assert dispatched[-3:] == ["report-page-assemble", "report-book-check", "report-book-render"]
+    # 册落地了才算成功：键随结论回来，业务侧据此签一条能打开的链接
+    assert result.book_key == f"reports/{spec.report_id}/book.html"
     unit_args = [arg for name, arg in log if name == "report-unit-compose"]
     assert sorted(arg["domain"] for arg in unit_args) == ["dom-budget", "dom-lighting"]
     assert all(arg["package"] == OPAQUE_PACKAGE for arg in unit_args)
     assert all(arg["max_rewrites"] == 2 for arg in unit_args)
-    assert log[-1][1]["package"] == OPAQUE_PACKAGE  # 册检同样拿到原包
+    assert log[-2][1]["package"] == OPAQUE_PACKAGE  # 册检同样拿到原包
+    assert log[-1][1]["package"] == OPAQUE_PACKAGE  # 出册也拿到原包（渲染要靠它解数字引用）
 
 
 async def test_report_compose_unit_failure_stops_before_assemble() -> None:

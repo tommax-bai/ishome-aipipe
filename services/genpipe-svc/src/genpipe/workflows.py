@@ -53,6 +53,7 @@ ACTIVITY_COMPLIANCE_CHECK = "compliance-check"
 ACTIVITY_REPORT_UNIT_COMPOSE = "report-unit-compose"
 ACTIVITY_REPORT_PAGE_ASSEMBLE = "report-page-assemble"
 ACTIVITY_REPORT_BOOK_CHECK = "report-book-check"
+ACTIVITY_REPORT_BOOK_RENDER = "report-book-render"
 
 WORKFLOW_TASK_QUEUE = "genpipe-workflows"
 """workflow 专属队列：起点（service.py）与执行者（genpipe workflow worker）同属本服务，
@@ -569,9 +570,41 @@ class ReportComposeWorkflow:
                 ),
             )
 
+        # 册检过了才出册：渲染层是 gen-locked 的执行者，不该把不合格的册排得漂漂亮亮存起来。
+        # 它派往另一条队列（`reportrender-activities`）而不是成文线那条——伸缩轴不同
+        # （渲染是 CPU + IO，成文是 LLM 推理），物理隔离的同一条判据。
+        try:
+            rendered = await _execute(
+                ACTIVITY_REPORT_BOOK_RENDER,
+                {"report_id": spec.report_id, "pages": pages, "package": spec.package},
+                task_queue=spec.queues.reportrender,
+            )
+        except (ActivityError, PipelineDataError) as err:
+            return failed(
+                "book-render",
+                failed_checks=[f"{ACTIVITY_REPORT_BOOK_RENDER}:{describe_failure(err)}"],
+            )
+        if rendered.get("verdict") != "ok":
+            render_violations = collect_violations(rendered)
+            return failed(
+                "book-render",
+                violations=render_violations,
+                failed_checks=unexplained_failure_checks(
+                    ACTIVITY_REPORT_BOOK_RENDER, render_violations
+                ),
+            )
+        book_key = rendered.get("book_key")
+        if not isinstance(book_key, str) or not book_key:
+            # verdict=ok 却没说册落在哪：册没落地却回报成功是本条线最贵的失效形态
+            # （调用方会去签一个指向空气的链接，业主点开是 404）——按失败处理。
+            return failed(
+                "book-render", failed_checks=[f"{ACTIVITY_REPORT_BOOK_RENDER}:missing-book-key"]
+            )
+
         return ReportComposeResult(
             report_id=spec.report_id,
             verdict="ok",
             pages=pages,
+            book_key=book_key,
             rewrite_rounds_by_domain=fanout.rewrite_rounds_by_domain,
         )

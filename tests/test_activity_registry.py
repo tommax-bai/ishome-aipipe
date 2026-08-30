@@ -10,13 +10,14 @@ from __future__ import annotations
 from genpipe.models import TaskQueues
 from genpipe.workflows import (
     ACTIVITY_REPORT_BOOK_CHECK,
+    ACTIVITY_REPORT_BOOK_RENDER,
     ACTIVITY_REPORT_PAGE_ASSEMBLE,
     ACTIVITY_REPORT_UNIT_COMPOSE,
 )
 from genpipe_worker.activities import ACTIVITY_REGISTRY
 from temporalio import activity
 
-# 注册名 → 函数名（kebab-case ↔ snake_case 动词前置，规范 §2.4）——contracts 全量 13 项
+# 注册名 → 函数名（kebab-case ↔ snake_case 动词前置，规范 §2.4）——contracts 全量 14 项
 CONTRACTS_ACTIVITY_REGISTRY: dict[str, str] = {
     "floorplan-parse": "parse_floorplan",
     "plan-layout-solve": "solve_plan_layout",
@@ -32,6 +33,8 @@ CONTRACTS_ACTIVITY_REGISTRY: dict[str, str] = {
     "report-unit-compose": "compose_report_unit",
     "report-page-assemble": "assemble_report_pages",
     "report-book-check": "check_report_book",
+    # #14 报告渲染层（contracts 2026-08-30 晚入册）：实现在 ishome-reportrender，本仓只按名派发
+    "report-book-render": "render_report_book",
 }
 
 # task queue → 承接 activity（contracts registries/task_queues.md，逐字一致）
@@ -51,16 +54,17 @@ CONTRACTS_TASK_QUEUE_OWNERSHIP: dict[str, set[str]] = {
         "report-page-assemble",
         "report-book-check",
     },
+    "reportrender-activities": {"report-book-render"},
 }
 
 
 def test_contracts_registry_total_unchanged() -> None:
-    """注册表只增不改：V1.4 绘图拆分只搬家不改名（10 项），成文线新增 3 项即 13。"""
-    assert len(CONTRACTS_ACTIVITY_REGISTRY) == 13
+    """注册表只增不改：V1.4 绘图拆分只搬家不改名（10 项），成文线 3 项、渲染层 1 项即 14。"""
+    assert len(CONTRACTS_ACTIVITY_REGISTRY) == 14
 
 
 def test_queue_ownership_partitions_contracts_registry() -> None:
-    """五条队列的承接集合两两不交，且并集恰为 contracts 全量注册表。"""
+    """六条队列的承接集合两两不交，且并集恰为 contracts 全量注册表。"""
     union: set[str] = set()
     for owned in CONTRACTS_TASK_QUEUE_OWNERSHIP.values():
         assert not (union & owned), "同一 activity 不得归属多条队列"
@@ -85,6 +89,19 @@ def test_report_dispatch_names_and_queue_match_contracts() -> None:
     assert TaskQueues().reportgen == "reportgen-activities"
     # 本仓 worker 不得承接成文线 activity（物理隔离：LLM 推理伸缩轴独立部署）
     assert not (set(ACTIVITY_REGISTRY) & dispatched)
+
+
+def test_book_render_dispatch_name_and_queue_match_contracts() -> None:
+    """出册 activity 实现在 ishome-reportrender，本仓只按名派发。
+
+    它与成文线**分队列**：渲染是 CPU + IO，成文是 LLM 推理，伸缩轴不同——
+    同一条"逻辑异质→物理隔离"的判据（这是它的第四次应用）。
+    """
+    assert {ACTIVITY_REPORT_BOOK_RENDER} == CONTRACTS_TASK_QUEUE_OWNERSHIP[
+        "reportrender-activities"
+    ]
+    assert TaskQueues().reportrender == "reportrender-activities"
+    assert ACTIVITY_REPORT_BOOK_RENDER not in set(ACTIVITY_REGISTRY)
 
 
 def test_registered_temporal_names_match_keys() -> None:

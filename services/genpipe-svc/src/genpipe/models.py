@@ -18,7 +18,7 @@ GenerationTaskType = Literal["plan-2d-render", "atmosphere-visual", "scene-compi
 ReportVerdict = Literal["ok", "failed"]
 """成文线结论词表：与 reportgen activity 的 verdict 同词——编排侧只透传不改写。"""
 
-ReportStage = Literal["unit-compose", "page-assemble", "book-check"]
+ReportStage = Literal["unit-compose", "page-assemble", "book-check", "book-render"]
 """成文线三阶段（图 v0.2 §2 流水线 / §4 校验三作用域）：值 = activity 注册名去 `report-`
 前缀，失败定位无需翻译表。"""
 
@@ -36,6 +36,7 @@ class TaskQueues(BaseModel):
     imagegen: str = "imagegen-activities"
     render3d: str = "render3d-activities"
     reportgen: str = "reportgen-activities"
+    reportrender: str = "reportrender-activities"
 
 
 class GenBatchSpec(BaseModel):
@@ -134,7 +135,7 @@ class UnitFanoutOutcome(BaseModel):
 
 
 class ReportComposeResult(BaseModel):
-    """报告成文线一次生成的结论（成功 = 三阶段全过）。"""
+    """报告成文线一次生成的结论（成功 = 四阶段全过：成文 → 装配 → 册检 → 出册）。"""
 
     report_id: str
     verdict: ReportVerdict
@@ -152,6 +153,11 @@ class ReportComposeResult(BaseModel):
     failed_checks: list[str] = Field(default_factory=list)
     """编排层失败码（入参违约 / 派发异常 / 结果形态违约），与既有 workflow 同名同义。"""
     rewrite_rounds_by_domain: dict[str, int] = Field(default_factory=dict)
+    book_key: str | None = None
+    """出册后册在私有对象存储里的键（`reports/{report_id}/book.html`，contracts
+    `registries/object_keys.md`）。**只是回执不是台账**——键由 report_id 确定性推得，
+    调用方不必留着它也能算出来；这里带上是为了让"这一趟到底出没出册"在结论里一眼可见。
+    编排侧不签链接：签名是"给谁看、看多久"的事，属业务侧（生成侧不知用户是谁）。"""
 
 
 class WorkflowStartReceipt(BaseModel):
