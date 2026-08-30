@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import os
+
+import uvicorn
+from fastapi import APIRouter, FastAPI, HTTPException
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from genpipe.models import (
@@ -50,3 +53,36 @@ async def create_report(spec: ReportComposeSpec) -> WorkflowStartReceipt:
 async def get_batch(batch_id: str) -> dict[str, str]:
     status = await get_batch_status(batch_id)
     return {"batch_id": batch_id, "status": status}
+
+
+app = FastAPI(
+    title="genpipe-svc",
+    description=(
+        "生成编排入站面。成文线派发通道走 HTTP 而非 Java Temporal SDK 直连"
+        "（裁决④：直连会把里程碑引擎裁决刚收缩掉的 Temporal 依赖放回 Java 服务）。"
+    ),
+)
+app.include_router(router)
+
+
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    """存活探针：只答本进程活着。
+
+    **不代下游背书**——不连 Temporal、不探 reportgen 队列：派发能不能成由派发本身
+    的响应码说话，探针替下游打包票会把"网关活着"误读成"整条线活着"。
+    """
+    return {"status": "ok"}
+
+
+def main() -> None:
+    """入口脚本 `genpipe-http`（pyproject [project.scripts]）。
+
+    监听地址由 `GENPIPE_HTTP_HOST` / `GENPIPE_HTTP_PORT` 覆盖；默认只绑回环——
+    本地联调不对外暴露，部署形态由 infra 决定。
+    """
+    uvicorn.run(
+        app,
+        host=os.environ.get("GENPIPE_HTTP_HOST", "127.0.0.1"),
+        port=int(os.environ.get("GENPIPE_HTTP_PORT", "8104")),
+    )

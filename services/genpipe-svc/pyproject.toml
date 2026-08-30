@@ -6,14 +6,17 @@ requires-python = ">=3.12"
 dependencies = [
   "ishome-contracts",
   "fastapi>=0.115",
+  "uvicorn>=0.30",
   "temporalio>=1.8",
   "pydantic>=2.9",
   "scoring",
 ]
 
-# 纵切入口：`uv run genpipe-workflow-worker` 启动 workflow worker（监听 genpipe-workflows）
+# 纵切入口：`uv run genpipe-workflow-worker` 启动 workflow worker（监听 genpipe-workflows）；
+# `uv run genpipe-http` 启动入站面（成文线派发入口 POST /api/v1/genpipe/reports，裁决④）
 [project.scripts]
 genpipe-workflow-worker = "genpipe.worker:main"
+genpipe-http = "genpipe.router:main"
 
 [tool.uv.sources]
 ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }
