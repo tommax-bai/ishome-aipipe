@@ -8,6 +8,7 @@ dependencies = [
   "temporalio>=1.8",
   "pydantic>=2.9",
   "httpx>=0.27",
+  "pillow>=11.0",  # 分区读的确定性裁剪与放大（剪刀在代码手里，不在模型手里）
   "adapters",
   "scoring",
 ]

@@ -23,6 +23,14 @@ from genpipe_worker.floorplan_parse import (
     read_floorplan_features,
     to_floorplan_features,
 )
+from genpipe_worker.floorplan_regions import (
+    RoomCropError,
+    RoomLegendError,
+    crop_room,
+    parse_room_legend,
+    read_room_legends,
+)
+from genpipe_worker.floorplan_survey import FloorplanSurveyError, parse_survey_output
 from genpipe_worker.layout_features import (
     CLOSED_SET_FILE,
     LayoutFeatureSetError,
@@ -35,7 +43,15 @@ from genpipe_worker.models import (
     FeatureVerdict,
     FloorplanVerdicts,
     LayoutObservation,
+    RoomLegend,
+    RoomOrientation,
+    RoomRegion,
     UnreadableGap,
+)
+from genpipe_worker.orientation import (
+    DEFAULT_NORTH_POINTS_TO,
+    to_cardinal,
+    to_room_orientations,
 )
 
 CONTRACTS_CLOSED_SET = (
@@ -46,11 +62,45 @@ CONTRACTS_CLOSED_SET = (
 CONTRACT_FEATURES = {"west_facing", "kitchen_u_shape", "bedroom_east_facing", "balcony_service"}
 
 
-class StubVisionReader:
-    """视觉补全桩件：记下收到的 prompt，吐回预设原文（单测不打网络）。"""
+SURVEY_STUB = (
+    '{"northPointsTo": "top", "rooms": ['
+    '{"name": "\u9633\u53f0", "box": [0.40, 0.55, 0.66, 0.66]},'
+    '{"name": "\u53a8\u623f", "box": [0.45, 0.18, 0.68, 0.34]}]}'
+)
+"""勘测桩：阳台在下、厨房在上。窗墙不在这一层——它在近景里定。"""
 
-    def __init__(self, output: str) -> None:
+LEGEND_TEXT = "端头画有两处虚线框，靠墙一侧有一个带圆点的小图形"
+LEGEND_STUB = f'{{"legend": "{LEGEND_TEXT}", "windowWalls": ["bottom"]}}'
+"""近景桩：读到图例，并报窗开在下侧墙。"""
+
+
+def make_png(width: int = 400, height: int = 600) -> bytes:
+    """造一张真 PNG——裁剪那一步要真解码，假字节过不了。"""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), (250, 250, 250)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class StubVisionReader:
+    """视觉补全桩件：记下收到的 prompt，按**这一步是哪一步**吐回预设原文（单测不打网络）。
+
+    解析分三步（勘测 / 逐块读图例 / 判定），逐块那步是并发的、次序不保证，
+    所以按系统提示认步，不按调用序号认步。
+    """
+
+    def __init__(
+        self,
+        output: str,
+        survey_output: str = SURVEY_STUB,
+        legend_output: str = LEGEND_STUB,
+    ) -> None:
         self.output = output
+        self.survey_output = survey_output
+        self.legend_output = legend_output
         self.calls: list[dict[str, Any]] = []
 
     async def complete_with_image(
@@ -72,7 +122,20 @@ class StubVisionReader:
                 "image_media_type": image_media_type,
             }
         )
+        if "勘测员" in system_prompt:
+            return self.survey_output
+        if "放大的一小块" in system_prompt:
+            return self.legend_output
         return self.output
+
+    @property
+    def verdict_prompt(self) -> str:
+        """判定那一步收到的用户提示（图例与朝向都在里面）。"""
+        return str(
+            next(
+                call["user_prompt"] for call in self.calls if "候选标记清单" in call["user_prompt"]
+            )
+        )
 
     async def aclose(self) -> None:
         return None
@@ -130,7 +193,7 @@ async def test_out_of_set_name_fails_even_when_judged_not_holding() -> None:
         ' "evidence": "厨房两排操作台呈 L 形"}]}'
     )
     with pytest.raises(LayoutFeatureViolation) as excinfo:
-        await read_floorplan_features(b"x", "image/png", reader)
+        await read_floorplan_features(make_png(), "image/png", reader)
     assert any("kitchen_l_shape" in line for line in excinfo.value.details)
 
 
@@ -316,10 +379,32 @@ def test_product_serializes_with_contract_key_names() -> None:
 def test_user_prompt_lists_every_closed_set_feature() -> None:
     """候选清单从契约数据生成、不手写进 prompt——契约加一条，prompt 自动多一行。"""
     closed_set = load_closed_set()
-    prompt = build_user_prompt(closed_set)
+    prompt = build_user_prompt(closed_set, [], [])
     for name, meaning in closed_set.items():
         assert name in prompt
         assert meaning in prompt
+
+
+def test_user_prompt_carries_legends_and_computed_orientations() -> None:
+    """判定那一步吃的是**逐房间图例**与**算好的朝向**，不是让它自己再看一遍指北针。"""
+    prompt = build_user_prompt(
+        load_closed_set(),
+        [RoomLegend(room="阳台", legend="端头画有两处虚线框")],
+        [RoomOrientation(room="主卧", window_walls=["bottom"], facings=["南"])],
+    )
+    assert "端头画有两处虚线框" in prompt
+    assert "主卧：窗开在bottom，朝南" in prompt
+    assert "不要自己再推一遍" in prompt
+
+
+def test_user_prompt_omits_rooms_without_windows_from_orientations() -> None:
+    """没画窗的房间不进朝向栏——提示里另说了"没列到＝没画窗"，免得模型替它补一个。"""
+    prompt = build_user_prompt(
+        load_closed_set(),
+        [],
+        [RoomOrientation(room="卫生间", window_walls=[], facings=[])],
+    )
+    assert "卫生间：窗开在" not in prompt
 
 
 def test_system_prompt_shows_no_negative_example() -> None:
@@ -333,6 +418,7 @@ def test_system_prompt_shows_no_negative_example() -> None:
 
 
 async def test_read_floorplan_features_happy_path() -> None:
+    image = make_png()
     reader = StubVisionReader(
         '{"verdicts": ['
         '{"feature": "balcony_service", "holds": true, "evidence": "阳台端头画了洗衣机设备位"},'
@@ -340,7 +426,7 @@ async def test_read_floorplan_features_happy_path() -> None:
         ' "observations": [{"subject": "厨房", "finding": "L 形开放式"}],'
         ' "unreadable": [{"subject": "尺寸", "reason": "无任何尺寸标注"}]}'
     )
-    reading = await read_floorplan_features(b"\x89PNG-fake", "image/png", reader)
+    reading = await read_floorplan_features(image, "image/png", reader)
     assert reading.logical_model == "floorplan-parse.default"
     assert reading.features.layout_features == {"balcony_service": "阳台端头画了洗衣机设备位"}
     # 没成立的那条不下发，但留在判定里（为什么判不成立是下一轮的素材）
@@ -348,9 +434,14 @@ async def test_read_floorplan_features_happy_path() -> None:
         ("balcony_service", True),
         ("kitchen_u_shape", False),
     ]
-    assert len(reader.calls) == 1  # 一次调用读整张图（两步读试过并撤回，见解析编排模块）
-    assert reader.calls[0]["image_media_type"] == "image/png"
-    assert reader.calls[0]["image_bytes"] == b"\x89PNG-fake"
+    # 分区读的成本形态：勘测 1 + 房间 N + 判定 1
+    assert reading.model_call_count == len(reading.survey.rooms) + 2 == 4
+    assert len(reader.calls) == 4
+    assert [item.room for item in reading.orientations] == ["阳台", "厨房"]
+    assert [legend.room for legend in reading.room_legends] == ["阳台", "厨房"]
+    # 逐块读到的图例与算好的朝向，真的进了判定那一步的提示
+    assert LEGEND_TEXT in reader.verdict_prompt
+    assert "阳台：窗开在bottom，朝南" in reader.verdict_prompt
 
 
 async def test_all_verdicts_negative_is_a_normal_result() -> None:
@@ -358,7 +449,7 @@ async def test_all_verdicts_negative_is_a_normal_result() -> None:
     reader = StubVisionReader(
         '{"verdicts": [{"feature": "west_facing", "holds": false, "evidence": "图上无朝向依据"}]}'
     )
-    reading = await read_floorplan_features(b"x", "image/png", reader)
+    reading = await read_floorplan_features(make_png(), "image/png", reader)
     assert reading.features.layout_features == {}
     assert len(reading.verdicts) == 1
 
@@ -369,7 +460,7 @@ async def test_read_floorplan_features_raises_on_out_of_set_key() -> None:
         '{"verdicts": [{"feature": "kitchen_l_shape", "holds": true, "evidence": "厨房呈 L 形"}]}'
     )
     with pytest.raises(LayoutFeatureViolation) as excinfo:
-        await read_floorplan_features(b"x", "image/png", reader)
+        await read_floorplan_features(make_png(), "image/png", reader)
     assert any("kitchen_l_shape" in line for line in excinfo.value.details)
 
 
@@ -389,7 +480,7 @@ def test_cli_exits_nonzero_and_names_the_key_on_out_of_set(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     image = tmp_path / "floorplan.png"
-    image.write_bytes(b"\x89PNG-fake")
+    image.write_bytes(make_png())
     _install_stub_client(
         monkeypatch,
         '{"verdicts": [{"feature": "kitchen_l_shape", "holds": true, "evidence": "厨房呈 L 形"}]}',
@@ -403,7 +494,7 @@ def test_cli_writes_archive_on_success(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     image = tmp_path / "floorplan.png"
-    image.write_bytes(b"\x89PNG-fake")
+    image.write_bytes(make_png())
     out = tmp_path / "reading.json"
     _install_stub_client(
         monkeypatch,
@@ -434,3 +525,171 @@ def test_cli_rejects_unknown_image_format(
     _install_stub_client(monkeypatch, '{"verdicts": []}')
     assert floorplan_cli_main(["--image", str(image)]) == 2
     assert "不认识的图片格式" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# 朝向换算：纯算术，同样的输入必然同样的答案（方位不由 LLM 决定）
+# ---------------------------------------------------------------------------
+
+
+def test_cardinal_follows_the_compass() -> None:
+    """指北针指哪条边，哪条边就是北，其余三边跟着转。"""
+    assert [to_cardinal(side, "top") for side in ("top", "right", "bottom", "left")] == [
+        "北",
+        "东",
+        "南",
+        "西",
+    ]
+    assert [to_cardinal(side, "right") for side in ("top", "right", "bottom", "left")] == [
+        "西",
+        "北",
+        "东",
+        "南",
+    ]
+    assert [to_cardinal(side, "bottom") for side in ("top", "right", "bottom", "left")] == [
+        "南",
+        "西",
+        "北",
+        "东",
+    ]
+    assert [to_cardinal(side, "left") for side in ("top", "right", "bottom", "left")] == [
+        "东",
+        "南",
+        "西",
+        "北",
+    ]
+
+
+def test_no_compass_falls_back_to_the_drafting_convention() -> None:
+    """图上没有指北针才用「上北下南左西右东」；有指北针以指北针为准。"""
+    assert DEFAULT_NORTH_POINTS_TO == "top"
+    assert to_cardinal("bottom", None) == "南"
+    assert to_cardinal("bottom", "bottom") == "北"  # 指北针与约定冲突时指北针赢
+
+
+def test_orientation_follows_the_window_wall_not_the_room_position() -> None:
+    """样本那张图的实况：主卧在图**左下角**，但飘窗画在**下侧墙**上 → 朝南，不是西南。
+
+    模型自己推时按房间位置推，出过"西南"，那是错的；换算按窗所在墙面走。
+    """
+    orientations = to_room_orientations(
+        "top",
+        [
+            RoomLegend(room="主卧", legend="底部墙上标飘窗", window_walls=["bottom"]),
+            RoomLegend(room="卫生间", legend="左侧是很粗的黑实线墙，无开口", window_walls=[]),
+        ],
+    )
+    assert orientations[0].room == "主卧"
+    assert orientations[0].facings == ["南"]
+    assert orientations[1].facings == []  # 没画窗＝没朝向，是事实不猜
+
+
+def test_orientation_is_reproducible() -> None:
+    """换算是算术，跑几次都一样——这条就是"主卧朝向出过三个答案"那件事的处置。"""
+    legends = [RoomLegend(room="主卧", legend="底部墙上标飘窗", window_walls=["bottom"])]
+    assert {tuple(to_room_orientations("top", legends)[0].facings) for _ in range(5)} == {("南",)}
+
+
+# ---------------------------------------------------------------------------
+# 分区裁剪：剪刀在代码手里
+# ---------------------------------------------------------------------------
+
+
+def test_crop_enlarges_the_region() -> None:
+    """裁出来的块要比原图上那一小块**大**——"看得更大"就是分区读的全部作用。"""
+    import io
+
+    from PIL import Image
+
+    image_bytes = make_png(400, 600)
+    region = RoomRegion(name="阳台", box=(0.40, 0.55, 0.66, 0.66))
+    crop = crop_room(image_bytes, region)
+    with Image.open(io.BytesIO(crop)) as cropped:
+        # 原图上这块约 104×66 像素；放大后长边不低于阈值
+        assert max(cropped.size) >= 1024
+
+
+def test_crop_rejects_a_broken_box() -> None:
+    image_bytes = make_png()
+    for box in ((0.6, 0.1, 0.2, 0.9), (-0.1, 0.1, 0.5, 0.9), (0.1, 0.1, 1.5, 0.9)):
+        with pytest.raises(RoomCropError) as excinfo:
+            crop_room(image_bytes, RoomRegion(name="阳台", box=box))
+        assert "阳台" in "；".join(excinfo.value.details)
+
+
+def test_crop_rejects_a_box_too_small_to_be_a_room() -> None:
+    with pytest.raises(RoomCropError) as excinfo:
+        crop_room(make_png(), RoomRegion(name="阳台", box=(0.5, 0.5, 0.51, 0.51)))
+    assert "小到不可能是个房间" in "；".join(excinfo.value.details)
+
+
+async def test_每个房间各读一次() -> None:
+    reader = StubVisionReader("{}")
+    legends = await read_room_legends(
+        make_png(),
+        [
+            RoomRegion(name="阳台", box=(0.40, 0.55, 0.66, 0.66)),
+            RoomRegion(name="厨房", box=(0.45, 0.18, 0.68, 0.34)),
+        ],
+        reader,
+        "floorplan-parse.default",
+    )
+    assert [legend.room for legend in legends] == ["阳台", "厨房"]
+    assert legends[0].window_walls == ["bottom"]  # 窗墙在近景里定，不在整图勘测里定
+    assert len(reader.calls) == 2
+    # 送出去的是裁剪放大后的块，不是原图
+    assert all(call["image_media_type"] == "image/png" for call in reader.calls)
+    assert len({call["image_bytes"] for call in reader.calls}) == 2
+
+
+# ---------------------------------------------------------------------------
+# 勘测输出解析
+# ---------------------------------------------------------------------------
+
+
+def test_survey_parses_compass_and_rooms() -> None:
+    survey = parse_survey_output(SURVEY_STUB)
+    assert survey.north_points_to == "top"
+    assert [room.name for room in survey.rooms] == ["阳台", "厨房"]
+
+
+def test_survey_without_compass_is_a_fact_not_a_failure() -> None:
+    survey = parse_survey_output(
+        '{"northPointsTo": null, "rooms": [{"name": "阳台", "box": [0.4, 0.5, 0.6, 0.7]}]}'
+    )
+    assert survey.north_points_to is None  # 没有指北针是事实不是缺失，换算退到通行约定
+
+
+def test_survey_with_no_rooms_fails_loud() -> None:
+    """读不出房间划分就不往下走——裁剪没有区域可裁，硬走等于把整图又读一遍。"""
+    with pytest.raises(FloorplanSurveyError):
+        parse_survey_output('{"northPointsTo": "top", "rooms": []}')
+
+
+def test_survey_rejects_an_unknown_compass_direction() -> None:
+    with pytest.raises(FloorplanSurveyError):
+        parse_survey_output('{"northPointsTo": "northeast", "rooms": []}')
+
+
+def test_room_legend_parses_legend_and_window_walls() -> None:
+    legend = parse_room_legend("阳台", LEGEND_STUB)
+    assert legend.room == "阳台"
+    assert legend.window_walls == ["bottom"]
+    assert LEGEND_TEXT in legend.legend
+
+
+def test_room_legend_without_window_is_a_fact() -> None:
+    """近景说这一块没画窗，就是没画窗——不许因为"房间应该有窗"补一个。
+
+    立案证据：整图勘测给没有窗的卫生间报过一面西窗，换算成"卫生间朝西"后催出一次误报。
+    """
+    legend = parse_room_legend("卫生间", '{"legend": "左侧是很粗的黑实线墙", "windowWalls": []}')
+    assert legend.window_walls == []
+    assert to_room_orientations("top", [legend])[0].facings == []
+
+
+def test_room_legend_rejects_a_broken_output() -> None:
+    with pytest.raises(RoomLegendError):
+        parse_room_legend("阳台", "这一块我看不清")
+    with pytest.raises(RoomLegendError):
+        parse_room_legend("阳台", '{"legend": "有虚线框", "windowWalls": ["northeast"]}')

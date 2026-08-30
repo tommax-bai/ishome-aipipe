@@ -12,12 +12,47 @@ AtmosphereVisualRequest / BaseRenderRequest / RealismPassRequest）随绘图能�
 `layout_features`（下发给报告求值线），闭集外的观察进 `observations`（**记录但不下发**），
 读不出的东西进 `unreadable`（响亮说明，不猜不留空）。序列化用 camelCase 别名对齐
 contracts 报告数据包的 `anonymousProfile.layoutFeatures`（Jackson 口径，同 reportgen 侧）。
+
+分区读与朝向换算（2026-08-30 晚，用户裁决）新增的中间层模型：`FloorplanSurvey`（整图勘测：
+房间在图上的区域 + 窗开在哪面墙 + 指北针指向）、`RoomLegend`（每块裁剪放大后读到的图例）、
+`RoomOrientation`（**代码换算**出来的朝向）。三者都是解析器内部形态，**不下发**——
+下发面只有 `FloorplanFeatures`。
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+PageSide = Literal["top", "bottom", "left", "right"]
+"""图面四边。房间的窗开在哪一边、指北针的 N 指向哪一边，都用这套词。
+
+用图面词而不是方位词是刻意的：**模型只报它看得见的事（窗画在房间的哪条边上），
+方位由代码算**（`orientation` 模块）——同"数字不由 LLM 决定"，方位也不由 LLM 决定。
+真跑证据：让模型自己推时，同一张图的主卧朝向出过"西南/南/西"三个答案，
+因为它每次都在现场心算、每次推的路径都不一样。
+"""
+
+
+class VisionReader(Protocol):
+    """视觉补全协议位：由组合根注入（生产＝LiteLLM 网关客户端，单测＝桩件）。
+
+    放在类型层而不是某个消费方模块里，是因为解析的三步（勘测 / 逐块读图例 / 判定）
+    都要用它，而它们互不可见——端口下沉到共同的底层，避免为共用一个协议开横向依赖。
+    """
+
+    async def complete_with_image(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        image_bytes: bytes,
+        image_media_type: str,
+        *,
+        temperature: float = 0.0,
+    ) -> str: ...
 
 
 class _FloorplanModel(BaseModel):
@@ -46,6 +81,64 @@ class UnreadableGap(_FloorplanModel):
 
     subject: str
     reason: str
+
+
+class RoomRegion(_FloorplanModel):
+    """勘测一步里的一个房间：图上写的名字、它占图的哪一块、窗开在它的哪几条边上。
+
+    `box` 是归一化坐标 `[x0, y0, x1, y1]`（0~1，左上角为原点），**给代码裁剪用**——
+    裁剪与放大是确定性动作，不由模型做（模型只指位置，剪刀在代码手里）。
+
+    这一层**不报窗开在哪面墙**：那件事在放大后的近景里才看得准（真跑证据见 `RoomLegend`），
+    整图勘测只负责"这个房间在哪一块"。
+    """
+
+    name: str
+    box: tuple[float, float, float, float]
+
+
+class FloorplanSurvey(_FloorplanModel):
+    """整图勘测产物：指北针指向 + 每个房间占图的哪一块。
+
+    `north_points_to` 为 `None` ＝**图上没有指北针**（是事实不是缺失）；换算时退到
+    通行约定，见 `orientation.DEFAULT_NORTH_POINTS_TO`。
+    """
+
+    north_points_to: PageSide | None = None
+    rooms: list[RoomRegion] = Field(default_factory=list)
+
+
+class RoomLegend(_FloorplanModel):
+    """一块裁剪放大后读到的东西：图例（自由文本）+ 窗开在这一块的哪几条边。
+
+    存在理由是九次真跑的结论：整图单次读**看不见**阳台端头那两个虚线设备位，
+    而模型被单独问那一小块时逐个说得出来——不是 prompt 问题，是分辨率问题。
+
+    `window_walls` 放在这一层而不是勘测层，同一个道理：**事实在看得最清楚的地方定**。
+    真跑证据（2026-08-30 晚）——整图勘测把次卧的飘窗报成右墙（实为下墙），
+    还给没有窗的卫生间报了一面西窗；而同一次跑里，这两个房间的近景读出的是对的。
+    那面凭空多出来的西窗经确定性换算变成"卫生间朝西"，直接催出了一次 `west_facing` 误报。
+    """
+
+    room: str
+    legend: str
+    window_walls: list[PageSide] = Field(default_factory=list)
+
+
+class RoomOrientation(_FloorplanModel):
+    """**代码算出来的**房间朝向：窗所在墙面对应的方位。
+
+    朝向取决于**窗开在哪面墙**，不取决于房间在图上的位置——样本那张图主卧在左下角、
+    飘窗画在下侧墙上，所以是朝南；按房间位置推会得出"西南"，那是错的。
+    `facings` 为空＝这个房间没有画窗（是事实，不猜）。
+
+    换算是算术、必然可复现；**但它算不出比输入更准的东西**——窗墙报错，这里就跟着错，
+    而且错得像个确定结论（真跑里有过这种误报，见 :class:`RoomLegend`）。
+    """
+
+    room: str
+    window_walls: list[PageSide] = Field(default_factory=list)
+    facings: list[str] = Field(default_factory=list)
 
 
 class FeatureVerdict(_FloorplanModel):
@@ -104,9 +197,17 @@ class FloorplanReading(_FloorplanModel):
     差异不必靠回忆（同报告线"真跑逐字对照"纪律）。
     留 `verdicts` 是因为**没成立的那几条也是数据**：模型为什么判它不成立，是下一轮改判据、
     改闭集、改读图方式的素材；投影之后这些就看不见了。
+
+    勘测、逐块图例、换算出的朝向三样一并留：分区读把一次调用变成了 1 + N + 1 次，
+    **贵到必须能回答"这钱花得值不值"**——留着它们才看得出漏判是勘测框错了、这一块没读到、
+    还是判定那一步没用上。`model_call_count` 就是这轮的调用次数。
     """
 
     logical_model: str
     raw_output: str
+    survey: FloorplanSurvey
+    room_legends: list[RoomLegend]
+    orientations: list[RoomOrientation]
     verdicts: list[FeatureVerdict]
     features: FloorplanFeatures
+    model_call_count: int

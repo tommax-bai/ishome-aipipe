@@ -34,6 +34,10 @@ ALLOWED_VERTICAL_FILES = {
     "floorplan_cli.py",  # 工具入口，与 worker 同层互不可见（接 Temporal 的时点＝上传入口就绪时）
     "floorplan_parse.py",  # 解析编排：prompt 组装 / 模型输出解析 / 过产出侧校验
     "layout_features.py",  # 户型特征标记闭集（契约副本）加载与产出侧校验，纯确定性
+    # 2026-08-30 晚 分区读与朝向换算评审通过（都有 import-linter 方向契约）：
+    "floorplan_survey.py",  # 勘测一步：整图定位每个房间的区域 + 窗墙 + 指北针，不下结论
+    "floorplan_regions.py",  # 确定性裁剪放大 + 逐块读图例（剪刀在代码手里，不在模型手里）
+    "orientation.py",  # 朝向换算，纯确定性——方位与数字同族，都不由 LLM 决定
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：

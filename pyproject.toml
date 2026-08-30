@@ -125,17 +125,21 @@ layers = ["router", "service", "repo", "models"]
 containers = ["genpipe", "chat"]
 
 [[tool.importlinter.contracts]]
-name = "worker 内 worker|floorplan_cli → activities → floorplan_parse → llm_client|layout_features → models 单向"
+name = "worker 内 worker|floorplan_cli → activities → floorplan_parse → 三步件 → 确定性件 → models 单向"
 type = "layers"
 # 两个顶层入口同层且互不可见（"|" = independent siblings）：`worker` 是 Temporal 入口，
 # `floorplan_cli` 是工具入口（户型图解析首版纯库 + CLI，接进 Temporal 的时点＝上传入口就绪时）。
-# `llm_client` 与 `layout_features` 同层互不可见，是"**闭集校验与模型调用无关**"的代码形态：
-# 校验若能碰到网关客户端，"没调模型时校验还成不成立"就成了一句要人相信的话。
+# 解析三步（勘测 / 逐块读图例 / 判定）里前两步同层互不可见——它们各自只对整图或一块图负责，
+# 谁也不该知道对方的 prompt；判定那一步在上面串起来。
+# `orientation` 与 `layout_features` 与 `llm_client` 同层互不可见，是两件事的代码形态：
+# **朝向换算与闭集校验都不碰模型调用**——它们若能碰到网关客户端，"没调模型时算得对不对/
+# 校验成不成立"就成了要人相信的话，而这两件恰恰是为了不必相信才搬进代码的。
 layers = [
   "worker | floorplan_cli",
   "activities",
   "floorplan_parse",
-  "llm_client | layout_features",
+  "floorplan_survey | floorplan_regions",
+  "orientation | llm_client | layout_features",
   "models",
 ]
 containers = ["genpipe_worker"]
@@ -147,7 +151,10 @@ source_modules = ["genpipe_worker.llm_client"]
 forbidden_modules = [
   "genpipe_worker.models",
   "genpipe_worker.layout_features",
+  "genpipe_worker.orientation",
   "genpipe_worker.floorplan_parse",
+  "genpipe_worker.floorplan_survey",
+  "genpipe_worker.floorplan_regions",
   "genpipe_worker.activities",
   "genpipe_worker.worker",
   "genpipe_worker.floorplan_cli",
@@ -163,10 +170,30 @@ forbidden_modules = [
   "genpipe_worker.models",
   "genpipe_worker.llm_client",
   "genpipe_worker.floorplan_parse",
+  "genpipe_worker.floorplan_survey",
+  "genpipe_worker.floorplan_regions",
   "genpipe_worker.activities",
   "genpipe_worker.worker",
   "genpipe_worker.floorplan_cli",
   "httpx",
+  "temporalio",
+]
+
+[[tool.importlinter.contracts]]
+name = "朝向换算纯确定性：orientation 只依赖类型层——方位不由 LLM 决定的代码形态"
+type = "forbidden"
+source_modules = ["genpipe_worker.orientation"]
+forbidden_modules = [
+  "genpipe_worker.llm_client",
+  "genpipe_worker.layout_features",
+  "genpipe_worker.floorplan_parse",
+  "genpipe_worker.floorplan_survey",
+  "genpipe_worker.floorplan_regions",
+  "genpipe_worker.activities",
+  "genpipe_worker.worker",
+  "genpipe_worker.floorplan_cli",
+  "httpx",
+  "PIL",
   "temporalio",
 ]
 
