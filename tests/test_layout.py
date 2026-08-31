@@ -44,6 +44,7 @@ ALLOWED_VERTICAL_FILES = {
     # 2026-08-31 户型事实评审通过（有 import-linter 方向契约）：
     "floorplan_facts.py",  # 几何 → 带 id 的结构化户型事实，纯确定性——空间推理背书通道的地基
     "floorplan_notes.py",  # 批注生成 + 引用机检：句子归模型、判据归代码（背书通道第一次实装）
+    "floorplan_copy.py",  # 获客图页面文案：不强制引用（裁决 8-31），但数字必须在事实清单里
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：

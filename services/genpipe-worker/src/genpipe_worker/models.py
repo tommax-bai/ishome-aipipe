@@ -268,6 +268,19 @@ class PlanNote(_FloorplanModel):
     cites: list[str] = Field(default_factory=list)
 
 
+class PlanCopy(_FloorplanModel):
+    """获客图上的页面文案：这个家的名字、一句打中人的话、三条小贴士。
+
+    与 :class:`PlanNote` 分开是因为**判据不同**：批注要引得到事实（它会被当依据用），
+    文案不要求（用户裁决 2026-08-31：获客工具不是严谨报告数据）。两处共用的只有一条——
+    **数字不许编**。
+    """
+
+    title: str
+    summary: str
+    tips: list[str] = Field(default_factory=list)
+
+
 class FeatureVerdict(_FloorplanModel):
     """模型对**一条候选标记**的判定：成不成立，以及为什么。
 

@@ -147,7 +147,7 @@ layers = [
   "worker | floorplan_cli | floorplan_geometry_cli",
   "activities",
   "floorplan_parse",
-  "floorplan_survey | floorplan_regions | floorplan_notes",
+  "floorplan_survey | floorplan_regions | floorplan_notes | floorplan_copy",
   "orientation | llm_client | layout_features | floorplan_facts",
   "floorplan_geometry",
   "models",
