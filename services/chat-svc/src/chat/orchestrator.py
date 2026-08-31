@@ -47,10 +47,22 @@ class LlmCompletion(Protocol):
 
 
 class OrchestratorTurn(BaseModel):
-    """一轮编排输出：抽取的事实 + 回复文案。"""
+    """一轮编排输出：抽取的事实 + 回复文案（若干短句）。
+
+    **回复是数组不是一个字符串**：人在 IM 里不会把回应、追问、说明挤成一段发出来，
+    而模型只要拿到一个字符串位、又被要求一轮说到好几件事，就只能挤成一段（真机实测）。
+
+    **断点由写的这一步自己标，不另起一个切分模型**（用户裁决 2026-08-31）：思维停顿是
+    写的时候产生的，不是文本的属性——写的那一方知道"这句是回应、下句是另一件事"，
+    停顿正从这儿来；整段写完再交给第二个模型，它只能从字面反推意图结构，信息更少，
+    还多一次调用的延迟与失败面。分条是一次想清楚、分几口说出来，**不是想几次**，
+    所以仍是单次 LLM 调用，编排不变。发送侧本就按数组循环发（幂等键带序号），这里给它源头。
+    **它标不好时的后续路径写死＝真机上出现"总是不分"或"在同一件事中间断开"时，
+    再加一步切分**——先用便宜的假设，被证伪了再上贵的。
+    """
 
     facts: list[Fact] = Field(default_factory=list)
-    reply: str = ""
+    replies: list[str] = Field(default_factory=list)
 
 
 _SYSTEM_PROMPT = """\
@@ -65,8 +77,11 @@ target_id / property 必须用下列口径：
 - 小区名 → floorplan / estate_name
 - 户型（如"89平两室两厅"） → floorplan / floorplan_label
 - 户型图来源 → floorplan / source，值 "library"（可按小区检索）或 "upload_pending"（待上传）
-- 比例锚点（用户实测/确认的一个已知尺寸，如入户门宽）
-  → scale-anchor / <部位英文snake_case>，unit 填 "mm"
+- 建筑面积 → floorplan / building_area_sqm，unit 填 "sqm"
+- 得房率 → floorplan / floor_area_ratio，值填百分数的数字（如 81），unit 填 "percent"；
+  用户说不知道、说不清或让系统自己推断时，值填 "unknown"
+- 用户**主动**给出的实测尺寸（如"我量了入户门宽 900"）
+  → scale-anchor / <部位英文snake_case>，unit 填 "mm"。他不主动给就没有这条，不要索取
 - 家庭结构 → household / composition
 - 核心诉求（最多3条） → need-1、need-2、need-3 / core_need
 - 不可接受项 → no-go-1、no-go-2… / constraint（用户明确说没有时值填 "无"）
@@ -75,21 +90,43 @@ target_id / property 必须用下列口径：
 规则：用户明确陈述的 cognitive_state 记 "observed"，你推断的记 "inferred"；
 长度尺寸一律毫米（mm）；没有新事实时 facts 为空数组；不确定的不要编造。
 
-二、回复（reply）：自然、专业、简洁的中文，规则：
-- 先回应用户刚说的内容；再针对缺口信息提问，一次只问一件事，禁止问卷式连问
-- 口头提到推断尺寸时带"约"
+二、回复（replies）：**一个数组，1 到 3 条**，中文，像人在 IM 里说话那样分条。
+
+怎么分条：
+- **判据是"这是另一件事"**——回应他刚说的是一件事，追问是另一件事，补充说明是第三件。
+  换一件事说就另起一条；**只有一件事要说就只发一条**，不要为了凑数硬拆
+- **不要按长度切**：把同一件事从中间断开比不分更难读
+- 兜底护栏：**一条超过 60 字**就说明这条里塞了不止一件事，回头看看该拆在哪儿
+- 一次只问一件事，禁止问卷式连问
+
+内容：
+- 先回应用户刚说的内容，再针对缺口信息提问
+- **绝不编造具体数字**：门宽、开间、面积这类数只能来自用户说过的或系统给你的；
+  想不起来就不说，禁止"大约 860mm""通常 3600mm"这类凭空举例
+- **绝不自造精度声明**：禁止"误差 ±2%""精度 95%"这类说法，你无从知道
+- 口头提到系统推断出来的尺寸时带"约"
 - 用户问设计原因时给出真实依据
 - 不承诺系统尚未具备的能力；当前阶段：收集并确认信息，之后生成初步设计方案
 - 禁止任何免责、责任划分类表述
-- 用户口述结构信息（承重墙/梁柱/烟道/管井）时，reply 中说明：口述的结构信息
-  不能作为设计依据；两条路——默认方案不动任何结构，或提供原始结构图纸/物业
-  文件作为硬证据
+- **不要请用户去实测任何尺寸**（不提卷尺、不说"方便时补测"）：户型尺寸由系统按户型图
+  自己标定，这是主路径不是降级路径。他主动给实测值就收下并道谢
+- 用户口述结构信息（承重墙/梁柱/烟道/管井）时说明：口述的结构信息不能作为设计依据；
+  两条路——默认方案不动任何结构，或提供原始结构图纸/物业文件作为硬证据
 """
 
 # 最小必要输入五槽位（§3.1）；键为槽位标识，值为缺口提示（喂给 LLM 的口径）
+#
+# **比例锚点已不在此列**（用户裁决 2026-08-31）：它曾是必答题，而缺口判定只看这条事实在不在、
+# 不看用户说过什么——于是业主答"不方便测量"，下一轮照样再问一遍，真机连问三轮。户型尺寸由
+# 系统按四级优先自己标定（分房间面积标注 > 任一段尺寸标注 > 门洞反标定 > 建筑面积配得房率，
+# 裁决 2026-08-30），**推算是主路径不是降级路径**。四级里唯一要图外信息的是得房率，而得房率是
+# 业主看一眼合同就知道的数，不用弯腰拿卷尺。用户主动给的实测尺寸照收（见提示词事实口径）。
 _SLOT_HINTS: dict[str, str] = {
     "floorplan": "户型（小区名+户型，或标记待上传户型图）",
-    "scale_anchor": "一个比例锚点（用户实测/确认的已知尺寸，如入户门宽，毫米）",
+    "floor_area_ratio": (
+        "得房率（问的时候同一句话里把台阶给够：不知道的话让我们自己推断就好。"
+        "他说不知道就记 unknown，不要再问第二次）"
+    ),
     "household": "家庭结构（谁住在这个家）",
     "core_need": "一至三个核心诉求",
     "no_go": "明确的不可接受项（没有也需用户明确说）",
@@ -99,6 +136,8 @@ _DISPLAY_LABELS: dict[tuple[str, str], str] = {
     ("floorplan", "estate_name"): "小区",
     ("floorplan", "floorplan_label"): "户型",
     ("floorplan", "source"): "户型图来源",
+    ("floorplan", "building_area_sqm"): "建筑面积",
+    ("floorplan", "floor_area_ratio"): "得房率",
     ("household", "composition"): "家庭结构",
 }
 
@@ -138,8 +177,18 @@ def parse_turn(raw: str) -> OrchestratorTurn:
         fact = _coerce_fact(item)
         if fact is not None:
             facts.append(fact)
-    reply = data.get("reply", "") if isinstance(data, dict) else ""
-    return OrchestratorTurn(facts=facts, reply=reply if isinstance(reply, str) else "")
+    return OrchestratorTurn(facts=facts, replies=_coerce_replies(data))
+
+
+def _coerce_replies(data: object) -> list[str]:
+    """回复数组；模型偶尔回退成单个 reply 字符串，收下当一条——形态退化不至于把话丢了。"""
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("replies")
+    if isinstance(raw, list):
+        return [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+    single = data.get("reply")
+    return [single.strip()] if isinstance(single, str) and single.strip() else []
 
 
 def _coerce_fact(item: object) -> Fact | None:
@@ -192,8 +241,9 @@ def missing_slots(project: ProjectState) -> list[str]:
     )
     if not has_floorplan:
         missing.append("floorplan")
-    if not any(f.target_id == "scale-anchor" for f in facts):
-        missing.append("scale_anchor")
+    # 答过"不知道"也算填过（值 unknown）：问一次就够，78~83% 兜底由标定那一侧接手
+    if not any(f.property == "floor_area_ratio" for f in facts):
+        missing.append("floor_area_ratio")
     if not any(f.target_id == "household" for f in facts):
         missing.append("household")
     if not any(f.property == "core_need" for f in facts):

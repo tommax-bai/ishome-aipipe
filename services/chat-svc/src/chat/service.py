@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Protocol
@@ -43,6 +44,13 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_REPLY = "这条我没处理好，麻烦再发一次。"
 """LLM 或编排故障时的兜底回话——每条入站必有一条出站（E2E 不变量）。"""
+
+# 分条之间的停顿（用户裁决 2026-08-31）：一轮多条要按上一条的长度歇一下再发下一条——
+# 三条瞬间刷屏，读的人还没看完第一条就被第二条盖过去了，分条反而比不分更难读。
+# 不模拟打字速度（那会慢到烦人），只给一个"够看完上一句"的短拍。
+_PACING_SECONDS_PER_CHAR = 0.03
+_PACING_MIN_SECONDS = 0.4
+_PACING_MAX_SECONDS = 1.5
 
 LlmCompletion = orchestrator.LlmCompletion
 """LLM 协议位（结构化子集；实现 llm_client.LiteLlmClient，测试 FakeLLM）。"""
@@ -104,6 +112,8 @@ async def ingest_message(
     if quick_reply_checklist is not None:
         outbounds.append(_quick_reply_checklist(inbound, quick_reply_checklist))
     for seq, outbound in enumerate(outbounds):
+        if seq > 0:
+            await asyncio.sleep(_pacing_seconds(_outbound_text(outbounds[seq - 1])))
         # 幂等键从入站消息派生：同一入站消息的回话重试不会在聊天线程里发两遍
         idempotency_key = f"reply-{inbound.message_id}-{seq}"
         await sender.send(outbound, idempotency_key=idempotency_key)
@@ -143,12 +153,14 @@ async def _converse(
     ):
         project.minimum_inputs_confirmed = False
 
-    reply_text = turn.reply or FALLBACK_REPLY
+    reply_texts = turn.replies or [FALLBACK_REPLY]
     if structural:
-        reply_text = f"{reply_text}\n\n{orchestrator.structural_note()}"
+        # 结构说明**自成一条**，不再拼在回话尾巴上：它是另一件事，而且拼上去正好把
+        # 那一条撑成真机上被吐槽的长文（用户 2026-08-31）
+        reply_texts = [*reply_texts, orchestrator.structural_note()]
 
     if project.minimum_inputs_confirmed or orchestrator.missing_slots(project):
-        return [reply_text], None
+        return reply_texts, None
 
     # 最小必要输入集齐：出确认清单（§8.2 文本形态）
     checklist_text, open_ids = orchestrator.build_checklist_text(project)
@@ -156,10 +168,18 @@ async def _converse(
     logger.info(
         "confirmation checklist issued: project=%s items=%d", project.project_id, len(open_ids)
     )
-    texts = [reply_text] if turn.reply else []
+    texts = reply_texts if turn.replies else []
     if await _supports_quick_reply(inbound, capability):
         return texts, checklist_text
     return [*texts, checklist_text], None
+
+
+def _pacing_seconds(previous_text: str) -> float:
+    """下一条之前歇多久：按上一条的长度算，钳在一个短区间里。"""
+    return min(
+        max(len(previous_text) * _PACING_SECONDS_PER_CHAR, _PACING_MIN_SECONDS),
+        _PACING_MAX_SECONDS,
+    )
 
 
 async def _route(

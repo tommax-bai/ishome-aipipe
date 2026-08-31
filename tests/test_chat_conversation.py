@@ -17,7 +17,7 @@ from chat import orchestrator, service
 from chat.channel_client import ChannelClient
 from chat.grpc_server import build_server
 from chat.intent import parse_intent, route_intent
-from chat.models import ConversationRef
+from chat.models import ConversationRef, ProjectState
 from chat.repo import active_store, find_or_create_project, reset_conversations, reset_messages
 from chat.repo.memory import MemoryChatStore
 from ishome.channel.v1 import message_pb2
@@ -44,6 +44,15 @@ ALL_SLOT_FACTS: list[dict[str, Any]] = [
         "cognitive_state": "observed",
     },
     {
+        # 得房率是四级标定里唯一要图外信息的一级，也是唯一还会开口问的一项
+        "target_id": "floorplan",
+        "property": "floor_area_ratio",
+        "value": 81,
+        "unit": "percent",
+        "cognitive_state": "observed",
+    },
+    {
+        # 比例锚点不是必答题（裁决 2026-08-31），但业主主动给的实测值照收
         "target_id": "scale-anchor",
         "property": "entry_door_width",
         "value": 900,
@@ -200,7 +209,7 @@ async def test_fact_extraction_and_cognitive_states() -> None:
         intents=[intent_json("provide_info")],
         turns=[
             turn_json(
-                [ALL_SLOT_FACTS[0], ALL_SLOT_FACTS[2]],
+                [ALL_SLOT_FACTS[0], ALL_SLOT_FACTS[3]],
                 "记下了。想先聊聊家里都有谁住吗？",
             )
         ],
@@ -213,6 +222,65 @@ async def test_fact_extraction_and_cognitive_states() -> None:
     assert project.base_facts.scale_anchor is not None
     assert len(sender.sent) == 1
     assert "记下了" in sender.sent[0].text.text
+
+
+@pytest.mark.asyncio
+async def test_replies_go_out_as_separate_messages() -> None:
+    # 一轮说几件事就发几条：模型自己标思维停顿，发送侧照数组发（用户裁决 2026-08-31）
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")],
+        turns=[
+            json.dumps(
+                {
+                    "facts": [ALL_SLOT_FACTS[0]],
+                    "replies": ["翠湖天地，记下了。", "家里都有谁住？"],
+                },
+                ensure_ascii=False,
+            )
+        ],
+    )
+    await service.ingest_message(make_inbound("我家在翠湖天地"), sender, llm)
+    assert [m.text.text for m in sender.sent] == ["翠湖天地，记下了。", "家里都有谁住？"]
+    # 幂等键按序号排：同一入站消息重试不会把两条都再发一遍
+    assert sender.idempotency_keys == ["reply-in-1-0", "reply-in-1-1"]
+
+
+def test_single_reply_string_still_accepted() -> None:
+    # 模型偶尔回退成旧形态，收下当一条——形态退化不至于把话丢了
+    turn = orchestrator.parse_turn(turn_json([], "就说一句"))
+    assert turn.replies == ["就说一句"]
+
+
+def test_scale_anchor_is_not_a_gap_but_floor_area_ratio_is() -> None:
+    """不再逼业主拿卷尺量房（用户裁决 2026-08-31）。
+
+    比例锚点曾是必答题，缺口判定只看事实在不在、不看用户说过什么——业主答"不方便测量"，
+    下一轮照样再问，真机连问三轮。尺寸由系统按四级优先自己标定，唯一要图外信息的是得房率。
+    """
+    project = ProjectState(project_id="p-slots", user_id="u-slots")
+    gaps = orchestrator.missing_slots(project)
+    assert "scale_anchor" not in gaps
+    assert "floor_area_ratio" in gaps
+
+    # 业主答"不知道"（值 unknown）也算填过：问一次就够，78~83% 兜底由标定那侧接手
+    orchestrator.merge_facts(
+        project,
+        orchestrator.parse_turn(
+            turn_json(
+                [
+                    {
+                        "target_id": "floorplan",
+                        "property": "floor_area_ratio",
+                        "value": "unknown",
+                        "cognitive_state": "observed",
+                    }
+                ],
+                "好，那我们自己推。",
+            )
+        ).facts,
+    )
+    assert "floor_area_ratio" not in orchestrator.missing_slots(project)
 
 
 @pytest.mark.asyncio
@@ -244,8 +312,9 @@ async def test_structural_facts_never_confirmable() -> None:
         ],
     )
     await service.ingest_message(make_inbound("客厅北墙是承重墙，我想砸掉", "in-s1"), sender, llm)
-    # 结构说明的固定文案随回复附带
-    assert "不能作为设计依据" in sender.sent[0].text.text
+    # 结构说明**自成一条**：它是另一件事，拼在回话尾巴上正好把那条撑成长文（用户 2026-08-31）
+    assert "不能作为设计依据" not in sender.sent[0].text.text
+    assert "不能作为设计依据" in sender.sent[1].text.text
     # 集齐五槽位后出清单：结构类事实不在清单里
     await service.ingest_message(make_inbound("其他信息都给你", "in-s2"), sender, llm)
     checklist = sender.sent[-1].text.text
