@@ -101,6 +101,23 @@ uv run floorplan-geometry \
 真跑留档（三次勘测的稳定性、四次改判各自的根因、开阔处房间边界为什么不稳）：
 `_iteration/run-2026-08-30-floorplan-geometry/run.md`，叠图见同目录 `overlay-1.png`。
 
+## chat-svc 对业主说话的两个时点
+
+**两样（面积 + 户型图）齐了 → 只说"开始设计"**（`service.DESIGN_START_MESSAGES`）：短、分条、
+不含任何假设、不再向他要任何信息。
+
+**图送回业主之后 → 才摊开说按什么假设做的**（`service.deliverables_delivered`）。裁决 8-31
+原话是"**产出结果之后**也告诉用户……如果他想修改可以再进行修改"，首版落成了"输入齐了就说"，
+真机上图还没影、业主先收到"我按 4 个人来安排"。**形态同 `floorplan-parse` 与母版：机件先做好、
+留一个真能调的入口（有测试直接调它），接线时点写死＝"渠道出站发我们自己桶里的图"那一段接通时**
+——今天没有调用方，因为图还送不到业主手里。
+
+**分条那条规矩同时管住系统写死的文案**：模型的回复走 `replies` 数组，系统文案（假设说明 /
+开始设计 / 结构说明）也一律返回若干条短消息，与回话**共用同一个出站循环**（`service._send_all`：
+停顿节拍 + 幂等键 + 落存）。兜底判据是 `orchestrator.ONE_THING_MAX_CHARS`（60 字），
+**提示词与门禁共用这一个常量**，`tests/test_chat_conversation.py` 逐条断言——
+不在提示词里再写一条禁令（《纪律·能自动拦住的不写成纪律》）。
+
 ## chat-svc 会话存储（svc_chat）
 
 - 迁移：`CHAT_DATABASE_URL=postgresql://... uv run chat-migrate`——纯 SQL 迁移在

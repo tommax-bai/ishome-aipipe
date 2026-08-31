@@ -14,6 +14,7 @@ from typing import Any, cast
 import grpc
 import pytest
 from chat import orchestrator, service
+from chat.assumptions import assumption_messages, infer_from_area
 from chat.channel_client import ChannelClient
 from chat.grpc_server import build_server
 from chat.intent import parse_intent, route_intent
@@ -402,9 +403,11 @@ async def test_structural_facts_never_confirmable() -> None:
         ],
     )
     await service.ingest_message(make_inbound("客厅北墙是承重墙，我想砸掉", "in-s1"), sender, llm)
-    # 结构说明**自成一条**：它是另一件事，拼在回话尾巴上正好把那条撑成长文（用户 2026-08-31）
+    # 结构说明**自成两条**：拒绝是一件事、两条出路是另一件事，拼在回话尾巴上正好把那条
+    # 撑成长文（用户 2026-08-31）
     assert "不能作为设计依据" not in sender.sent[0].text.text
     assert "不能作为设计依据" in sender.sent[1].text.text
+    assert "两条路任选" in sender.sent[2].text.text
     # 结构类事实永不进可确认集合——口述的结构信息不作设计依据（§8.3）
     await service.ingest_message(make_inbound("其他信息都给你", "in-s2"), sender, llm)
     project = await find_or_create_project(conversation_ref())
@@ -413,14 +416,16 @@ async def test_structural_facts_never_confirmable() -> None:
     assert all(f.fact_kind == "dimensional" for f in orchestrator.confirmable_facts(project))
 
 
-# --- 两样齐了：摊开说假设 ---
+# --- 两样齐了：只说开始设计；假设那套等产出送到业主手里之后 ---
 
 
 @pytest.mark.asyncio
-async def test_assumptions_are_told_once_the_two_inputs_are_in() -> None:
-    """面积与户型图都齐了就把按面积推的那套摊开说，**不出确认清单、不要他按确认**。
+async def test_two_inputs_in_says_only_that_design_started() -> None:
+    """面积与户型图都齐了，**只说开始设计**——不提任何假设，也不再要任何信息。
 
-    形态是"先做出来再让他改"（裁决 8-31）：给了就用、不给就算。
+    真机上图还没发出去，业主就先收到"我按 4 个人来安排、得房率按 80% 算"，
+    他不知道这是在说哪份东西（用户 2026-08-31 晚）。裁决原话本来就写着
+    "产出结果之后也告诉用户"，首版把"产出后"落成了"输入齐了后"。
     """
     sender = CapturingSender()
     llm = FakeLlm(
@@ -430,12 +435,57 @@ async def test_assumptions_are_told_once_the_two_inputs_are_in() -> None:
 
     await service.ingest_message(make_inbound("138 平，图发你了"), sender, llm)
 
-    told = sender.sent[-1].text.text
-    assert "138 平" in told
-    assert "我按 4 个人来安排" in told  # 138/34 → 4，与用户给的锚点一致
-    assert "80%" in told
-    assert "不说也没关系" in told  # 邀请不是追问
+    texts = [m.text.text for m in sender.sent]
+    assert texts[-2:] == list(service.DESIGN_START_MESSAGES)
+    # 一个假设都不许提前漏出来
+    for leak in ("我按", "得房率", "%", "装修方向", "不说也没关系"):
+        assert all(leak not in t for t in texts), leak
     assert not any(m.WhichOneof("content") == "quick_reply" for m in sender.sent)
+
+
+@pytest.mark.asyncio
+async def test_design_start_is_never_repeated() -> None:
+    """开工只报一次：每轮再说一遍就成了复读。"""
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info"), intent_json("provide_info")],
+        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。"), turn_json([], "好的。")],
+    )
+    await service.ingest_message(make_inbound("138 平，图发你了", "in-d1"), sender, llm)
+    before = len(sender.sent)
+
+    await service.ingest_message(make_inbound("再说一句", "in-d2"), sender, llm)
+
+    assert all("开始给你做设计" not in m.text.text for m in sender.sent[before:])
+
+
+@pytest.mark.asyncio
+async def test_assumptions_are_told_after_the_deliverables_reach_the_owner() -> None:
+    """图送到业主手里之后才摊开说假设——**入口真能调，不是一句 TODO 注释**。
+
+    今天没有调用方（图还送不到业主手里，"渠道出站发我们自己桶里的图"那一段未做），
+    接线时点写死＝那一段接通时。所以这条路径只有这个测试在跑，它必须真跑得通。
+    """
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")],
+        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。")],
+    )
+    await service.ingest_message(make_inbound("138 平，图发你了", "in-a1"), sender, llm)
+    before = len(sender.sent)
+
+    assert await service.deliverables_delivered(conversation_ref(), sender, delivery_id="deliv-1")
+
+    told = [m.text.text for m in sender.sent[before:]]
+    # **一条一件事**：面积 / 人数 / 得房率 / 装修倾向 / 改的入口，五条各说一件
+    assert len(told) == 5
+    assert "138 平" in told[0]
+    assert "我按 4 个人来安排" in told[1]  # 138/34 → 4，与用户给的锚点一致
+    assert "80%" in told[2]
+    assert "改善讲究" in told[3]
+    assert "不说也没关系" in told[4]  # 邀请不是追问
+    # 走的是同一条出站循环：幂等键带序号，同一次送达重投不会说两遍
+    assert sender.idempotency_keys[before:] == [f"assumptions-deliv-1-{i}" for i in range(5)]
 
 
 @pytest.mark.asyncio
@@ -443,15 +493,61 @@ async def test_assumptions_are_never_repeated() -> None:
     """只说一次：每轮再说一遍就从"告知"变成"催问"了。"""
     sender = CapturingSender()
     llm = FakeLlm(
-        intents=[intent_json("provide_info"), intent_json("provide_info")],
-        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。"), turn_json([], "好的。")],
+        intents=[intent_json("provide_info")],
+        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。")],
     )
     await service.ingest_message(make_inbound("138 平，图发你了", "in-a1"), sender, llm)
+    assert await service.deliverables_delivered(conversation_ref(), sender, delivery_id="deliv-1")
     before = len(sender.sent)
 
-    await service.ingest_message(make_inbound("再说一句", "in-a2"), sender, llm)
+    assert not await service.deliverables_delivered(
+        conversation_ref(), sender, delivery_id="deliv-2"
+    )
 
-    assert all("我按" not in m.text.text for m in sender.sent[before:])
+    assert len(sender.sent) == before
+
+
+@pytest.mark.asyncio
+async def test_assumptions_are_not_told_without_an_area() -> None:
+    """面积拿不到就响亮地不说——不拿默认面积顶上（《纪律·拿不到就说没有，不许填猜的值》）。"""
+    sender = CapturingSender()
+
+    assert not await service.deliverables_delivered(
+        conversation_ref(), sender, delivery_id="deliv-0"
+    )
+
+    assert sender.sent == []
+
+
+def test_every_message_we_write_ourselves_says_one_thing() -> None:
+    """系统写死的、会发给业主的每一条文案都是**一条一件事**。
+
+    分条那条规矩（用户裁决 2026-08-31）此前只管住了模型的回复数组：提示词里写着"一条超过
+    60 字就说明塞了不止一件事"，而系统自己写死的文案没人管——真机上那段假设说明就是一整段
+    发出去的。**能自动拦住的不写成纪律**：判据用的就是提示词里那个数，两处同一个常量。
+    换行同样判死：一条里换行就是把两件事叠在了一条消息里。
+
+    确认清单与确认回执不在这份名单里：它们的时点已经挪到"真有产出可确认时"，
+    今天不发给业主（裁决 8-31），结构原样不动。
+    """
+    # 提示词与门禁共用同一个兜底数（《纪律·同一条规矩只写一处》）
+    assert f"{orchestrator.ONE_THING_MAX_CHARS} 字" in orchestrator._SYSTEM_PROMPT
+
+    written_by_us = [
+        service.FALLBACK_REPLY,
+        *service.DESIGN_START_MESSAGES,
+        *orchestrator.structural_notes(),
+        # 假设那几条的字面随面积变（人数、装修倾向与理由都是算出来的），四档各量一遍
+        *(
+            text
+            for area in (60.0, 92.0, 138.0, 220.0)
+            for text in assumption_messages(infer_from_area(area))
+        ),
+    ]
+
+    for text in written_by_us:
+        assert "\n" not in text, text
+        assert len(text) <= orchestrator.ONE_THING_MAX_CHARS, f"{len(text)} 字：{text}"
 
 
 # --- 幂等与兜底 ---

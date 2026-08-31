@@ -68,11 +68,17 @@ def infer_from_area(building_area_sqm: float) -> PlanAssumptions:
     )
 
 
-def assumption_text(assumptions: PlanAssumptions) -> str:
-    """把假设摊开说，并给出改的入口。**文字由系统确定，不经 LLM**（同确认清单的先例）。
+def assumption_messages(assumptions: PlanAssumptions) -> list[str]:
+    """把假设摊开说，并给出改的入口——**一条一件事，若干条短消息**。
 
-    句子里每个数都来自上面推出来的那套，没有一个是模型写的。
-    结尾那句是**邀请不是追问**：给了就用，不给就算——裁决里"如果用户填写就填写，
+    **文字由系统确定，不经 LLM**（同确认清单的先例）：每个数都来自上面推出来的那套。
+
+    **为什么是数组不是一段**（用户 2026-08-31 晚）：分条那条规矩此前只管住了模型的回复，
+    系统自己写死的文案没被管住——真机上这段是一整段发出去的，五件事（按什么面积做、人数、
+    得房率、装修倾向、改的入口）挤在一条里，业主看到的是一堵墙。发送侧本就按数组循环发并
+    带停顿节拍，这里给它源头，**不为系统文案另开一条发送路径**。
+
+    最后一条是**邀请不是追问**：给了就用，不给就算——裁决里"如果用户填写就填写，
     不填写就不填写"说的就是这件事，所以这段话之后不再追第二次。
     """
     area = (
@@ -80,12 +86,12 @@ def assumption_text(assumptions: PlanAssumptions) -> str:
         if float(assumptions.building_area_sqm).is_integer()
         else f"{assumptions.building_area_sqm:.1f}"
     )
-    return (
-        f"先说下我这边按什么做的：你这套 {area} 平，"
-        f"一般住 {assumptions.occupants_low}~{assumptions.occupants_high} 个人，"
-        f"我按 {assumptions.occupants_assumed} 个人来安排；"
-        f"得房率按常见的 {assumptions.floor_area_ratio_percent}% 算；"
-        f"装修方向先按「{assumptions.taste}」走——{assumptions.taste_reason}。\n"
-        "这些要是跟你家不一样，直接告诉我住几个人、得房率多少就行；"
-        "想让我做得更贴你们小区的话，也可以把小区名发我。不说也没关系，我就按上面这套做。"
-    )
+    return [
+        f"再说下我这边是按什么做的：面积按你说的 {area} 平。",
+        f"这么大的房子一般住 {assumptions.occupants_low}~{assumptions.occupants_high} 个人，"
+        f"我按 {assumptions.occupants_assumed} 个人来安排。",
+        f"得房率按常见的 {assumptions.floor_area_ratio_percent}% 算。",
+        f"装修方向按「{assumptions.taste}」走——{assumptions.taste_reason}。",
+        "这几条要是跟你家不一样，直接告诉我住几个人、得房率多少、小区叫什么就行；"
+        "不说也没关系，我就按这套做。",
+    ]

@@ -122,11 +122,20 @@ class ProjectState(BaseModel):
     phase: ProjectPhase = "preliminary"
     revision: int = 0
     base_facts: BaseFacts = Field(default_factory=BaseFacts)
+    design_start_told: bool = False
+    """两样（面积 + 户型图）齐了之后，"这就开始做设计"跟他说过没有。
+
+    与 `assumptions_told` **分成两个开关**，因为它们是**两个时点**：这条在两样齐的那一轮说，
+    那条要等产出送到业主手里之后（裁决 8-31 原话："产出结果之后也告诉用户"）。
+    合成一个开关，两件事就没法各说各的一次。
+    """
+
     assumptions_told: bool = False
     """按面积推的那套默认假设，跟他说过没有。
 
     只说一次：裁决 8-31 的形态是"摊开说 + 给改的入口，给了就用不给就算"，
     每轮再说一遍就从"告知"变成"催问"了。
+    **置上的时点是三张图送回业主之后**（`service.deliverables_delivered`），不是缺口一空。
     """
 
     # 确认闭环（§8.2）：当前待确认的 fact_key 清单（会话侧状态，落库归 svc_chat）

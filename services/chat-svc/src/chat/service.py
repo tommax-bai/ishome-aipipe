@@ -2,8 +2,12 @@
 
 流程：入站落存（svc_chat.messages，幂等键防重存兼去重门）→ 输入归一化
 （v1：quick_reply 直通；TODO(normalize) 多消息聚合、语音转文字）→ Intent Router
-→ Orchestrator（事实抽取 + 回复）→ 确认闭环（最小必要输入集齐 → 文本版确认
-清单 → user_confirmed 升级）→ 出站回话（发送后落存出站原文）。
+→ Orchestrator（事实抽取 + 回复）→ 两样（面积 + 户型图）齐了说"开始设计"
+→ 出站回话（发送后落存出站原文）。
+
+**假设那套不在这条流程里**：它由 `deliverables_delivered` 在图送回业主之后主动发
+（裁决 8-31 原话"产出结果之后也告诉用户"）。确认闭环（清单 → user_confirmed 升级）
+机件保留，时点同样挪到真有产出可确认时——两处都不是删掉，是等它们该发生的那一刻。
 
 存储：`CHAT_DATABASE_URL` 设置时消息原文落 PG（schema svc_chat），未设时内存
 （e2e-mock-smoke 裸起可跑）——选择在 repo 层，本层不感知。会话态（项目快照/
@@ -21,15 +25,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 
 from ishome.channel.v1 import message_pb2
+from ishome.common.v1 import channel_type_pb2
 from ulid import ULID
 
 from chat import intent as intent_router
 from chat import orchestrator
-from chat.assumptions import assumption_text, infer_from_area
+from chat.assumptions import assumption_messages, infer_from_area
 from chat.models import ChatMessage, ConversationRef, ConversationTurn, ProjectState
 from chat.repo import (
     append_history,
@@ -45,6 +51,17 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_REPLY = "这条我没处理好，麻烦再发一次。"
 """LLM 或编排故障时的兜底回话——每条入站必有一条出站（E2E 不变量）。"""
+
+DESIGN_START_MESSAGES: tuple[str, ...] = (
+    "面积和户型图都齐了，我这就开始给你做设计。",
+    "做好了我直接把图发过来，你先不用再准备什么。",
+)
+"""两样齐了那一轮只说这一件事：**开始设计**（用户 2026-08-31 晚纠正）。
+
+**这里一个假设都不提**：假设那套要等图发到业主手里之后才说（`deliverables_delivered`）。
+真机上图还没影，业主先收到"我按 4 个人来安排"——他不知道这是在说哪份东西。
+第二条也**不再向他要任何信息**：说清"你不用再准备什么"，比只在提示词里禁止追问更牢靠。
+"""
 
 # 分条之间的停顿（用户裁决 2026-08-31）：一轮多条要按上一条的长度歇一下再发下一条——
 # 三条瞬间刷屏，读的人还没看完第一条就被第二条盖过去了，分条反而比不分更难读。
@@ -112,21 +129,87 @@ async def ingest_message(
     outbounds = [_text_reply(inbound, text) for text in reply_texts]
     if quick_reply_checklist is not None:
         outbounds.append(_quick_reply_checklist(inbound, quick_reply_checklist))
+    # 幂等键从入站消息派生：同一入站消息的回话重试不会在聊天线程里发两遍
+    await _send_all(
+        conversation, sender, outbounds, idempotency_prefix=f"reply-{inbound.message_id}"
+    )
+    await save_project(conversation, project)
+    return inbound.message_id
+
+
+async def deliverables_delivered(
+    conversation: ConversationRef,
+    sender: OutboundSender,
+    *,
+    delivery_id: str,
+) -> bool:
+    """**三张图已经发回业主之后**：把按面积推的那套假设摊开说，并给一个改的入口。
+
+    **时点是"产出之后"，不是"输入齐了之后"**（用户 2026-08-31 晚纠正）：裁决原话写的就是
+    "产出结果之后也告诉用户……如果他想修改可以再进行修改"，首版却落成了"缺口一空就说"——
+    真机上业主刚发完图，先收到一条"我按 4 个人来安排、得房率按 80% 算"，图还没影，
+    他不知道这是在说哪份东西。两样齐了那一轮只说"开始设计"（`DESIGN_START_MESSAGES`）。
+
+    **今天没有调用方，接线时点写死＝"渠道出站发我们自己桶里的图"那一段接通时**——图眼下还
+    送不到业主手里（《现在在哪儿.md》"图从会话进来"五段里的第三段未做）。同渲染件与
+    `floorplan-parse` 那两处先例："机件先做好、留一个真能调的入口，接线时点写死成事件名"，
+    不留一句 TODO 注释——注释调不了，入口调得了，测试也就拦得住。
+
+    只说一次（`ProjectState.assumptions_told`）。面积取不到就**响亮记一条日志并返回 False**，
+    不拿默认面积顶上（《纪律·拿不到就说没有，不许填猜的值》）。
+
+    参数 `delivery_id`：这次送达的标识，用来派生出站幂等键——同一次送达重投不会说两遍。
+    返回：这次是否真的说了。
+    """
+    project = await find_or_create_project(conversation)
+    if project.assumptions_told:
+        return False
+    area_sqm = orchestrator.find_building_area_sqm(project)
+    if area_sqm is None:
+        logger.warning(
+            "assumptions not told: project=%s 没有建筑面积，按什么做的说不出来",
+            project.project_id,
+        )
+        return False
+
+    project.assumptions_told = True
+    told = assumption_messages(infer_from_area(area_sqm))
+    outbounds = [_text_message(conversation, text) for text in told]
+    await _send_all(
+        conversation, sender, outbounds, idempotency_prefix=f"assumptions-{delivery_id}"
+    )
+    await save_project(conversation, project)
+    logger.info("assumptions told: project=%s area_sqm=%s", project.project_id, area_sqm)
+    return True
+
+
+async def _send_all(
+    conversation: ConversationRef,
+    sender: OutboundSender,
+    outbounds: Sequence[message_pb2.UnifiedMessage],
+    *,
+    idempotency_prefix: str,
+) -> None:
+    """逐条发出，条与条之间按分条节拍歇一下，并把出站原文与上下文历史一并记上。
+
+    **回话与主动消息共用这一个出口**：分条那条规矩（用户裁决 2026-08-31）此前只管住了模型的
+    回复数组；系统写死的文案若自己另写一段发送逻辑，就绕过了停顿节拍、幂等键与落存——
+    出口只留一个，绕不过去。
+    """
     for seq, outbound in enumerate(outbounds):
         if seq > 0:
             await asyncio.sleep(_pacing_seconds(_outbound_text(outbounds[seq - 1])))
-        # 幂等键从入站消息派生：同一入站消息的回话重试不会在聊天线程里发两遍
-        idempotency_key = f"reply-{inbound.message_id}-{seq}"
+        idempotency_key = f"{idempotency_prefix}-{seq}"
         await sender.send(outbound, idempotency_key=idempotency_key)
         await record_outbound(conversation, _outbound_message(outbound, idempotency_key))
         await append_history(
             conversation, ConversationTurn(role="assistant", text=_outbound_text(outbound))
         )
         logger.info(
-            "reply sent: message_id=%s in_reply_to=%s", outbound.message_id, inbound.message_id
+            "outbound sent: message_id=%s idempotency_key=%s",
+            outbound.message_id,
+            idempotency_key,
         )
-    await save_project(conversation, project)
-    return inbound.message_id
 
 
 async def _converse(
@@ -161,22 +244,20 @@ async def _converse(
 
     reply_texts = turn.replies or [FALLBACK_REPLY]
     if structural:
-        # 结构说明**自成一条**，不再拼在回话尾巴上：它是另一件事，而且拼上去正好把
-        # 那一条撑成真机上被吐槽的长文（用户 2026-08-31）
-        reply_texts = [*reply_texts, orchestrator.structural_note()]
+        # 结构说明**自成两条**，不再拼在回话尾巴上：拒绝是一件事、两条出路是另一件事，
+        # 而拼上去正好把那一条撑成真机上被吐槽的长文（用户 2026-08-31）
+        reply_texts = [*reply_texts, *orchestrator.structural_notes()]
 
-    if orchestrator.missing_slots(project) or project.assumptions_told:
+    if orchestrator.missing_slots(project) or project.design_start_told:
         return reply_texts, None
 
-    # 面积与户型图都齐了：**把按面积推的那套假设摊开说，并给一个改的入口**
-    # （裁决 8-31）。这里不出确认清单、不要他按确认——他给了就用、不给就算，形态是
-    # "先做出来再让他改"。确认闭环那套机制没废，它的时点挪到**真有产出可确认时**。
-    area_sqm = orchestrator.find_building_area_sqm(project)
-    if area_sqm is None:
-        return reply_texts, None
-    project.assumptions_told = True
-    logger.info("assumptions told: project=%s area_sqm=%s", project.project_id, area_sqm)
-    return [*reply_texts, assumption_text(infer_from_area(area_sqm))], None
+    # 面积与户型图两样齐了：**只说开始设计**（用户 2026-08-31 晚纠正）。不出确认清单、
+    # 不再要任何信息，也**不在这儿说按什么假设做的**——那套要等图送到业主手里之后才说
+    # （`deliverables_delivered`），裁决原话就是"产出结果之后也告诉用户"。
+    # 确认闭环那套机件同样没废，时点同样挪到真有产出可确认时。
+    project.design_start_told = True
+    logger.info("design start told: project=%s", project.project_id)
+    return [*reply_texts, *DESIGN_START_MESSAGES], None
 
 
 def _pacing_seconds(previous_text: str) -> float:
@@ -279,6 +360,21 @@ def _text_reply(inbound: message_pb2.UnifiedMessage, text: str) -> message_pb2.U
     return reply
 
 
+def _text_message(conversation: ConversationRef, text: str) -> message_pb2.UnifiedMessage:
+    """主动消息的文本形态：**没有入站消息可挂**，信封只能从会话三元组来。
+
+    渠道侧 user_id 这里给不出（会话键里没有）——TODO(identity)：identity 归一后
+    与 `_reply_envelope` 一起改为渠道无关 user_id。
+    """
+    message = _outbound_envelope(
+        channel_type=conversation.channel_type,
+        channel_instance=conversation.channel_instance,
+        external_user_id=conversation.external_user_id,
+    )
+    message.text.CopyFrom(message_pb2.TextContent(text=text))
+    return message
+
+
 def _quick_reply_checklist(
     inbound: message_pb2.UnifiedMessage, checklist_text: str
 ) -> message_pb2.UnifiedMessage:
@@ -300,16 +396,34 @@ def _quick_reply_checklist(
 
 
 def _reply_envelope(inbound: message_pb2.UnifiedMessage) -> message_pb2.UnifiedMessage:
-    reply = message_pb2.UnifiedMessage(
-        message_id=str(ULID()),
+    return _outbound_envelope(
         channel_type=inbound.channel_type,
         channel_instance=inbound.channel_instance,
-        direction=message_pb2.MESSAGE_DIRECTION_OUTBOUND,
         external_user_id=inbound.external_user_id,
         user_id=inbound.user_id,
     )
-    reply.occurred_at.GetCurrentTime()
-    return reply
+
+
+def _outbound_envelope(
+    *,
+    channel_type: int,
+    channel_instance: str,
+    external_user_id: str,
+    user_id: str = "",
+) -> message_pb2.UnifiedMessage:
+    """出站消息信封（回话与主动消息共用）。"""
+    message = message_pb2.UnifiedMessage(
+        message_id=str(ULID()),
+        # 会话键里的渠道类型是裸 int（ConversationRef 与渠道协议解耦），proto 侧那个枚举
+        # 本身就是 int 的子类——这里只还原类型声明，不做任何取值换算
+        channel_type=cast(channel_type_pb2.ChannelType, channel_type),
+        channel_instance=channel_instance,
+        direction=message_pb2.MESSAGE_DIRECTION_OUTBOUND,
+        external_user_id=external_user_id,
+        user_id=user_id,
+    )
+    message.occurred_at.GetCurrentTime()
+    return message
 
 
 def _outbound_text(outbound: message_pb2.UnifiedMessage) -> str:
