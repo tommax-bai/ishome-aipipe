@@ -145,6 +145,11 @@ async def _converse(
         logger.info("checklist confirmed: project=%s upgraded=%d", project.project_id, upgraded)
         return [orchestrator.confirm_ack_text()], None
 
+    # 图片入站：先把"他传了户型图"记上再算缺口——否则这一轮还按"还没有图"问，
+    # 而他刚传的就是图（真机上问出了"您家在哪个小区？几室几厅？"）
+    if inbound.WhichOneof("content") == "image":
+        orchestrator.merge_facts(project, [orchestrator.upload_fact()])
+
     turn = await orchestrator.step(llm, project, await get_history(conversation), user_text)
     structural = orchestrator.merge_facts(project, turn.facts)
     # 修正已确认信息 → 撤下确认标记，走重新确认回路

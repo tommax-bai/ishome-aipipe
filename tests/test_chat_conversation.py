@@ -87,6 +87,7 @@ class FakeLlm:
         self.intents = intents or []
         self.turns = turns or []
         self.calls: list[str] = []
+        self.turn_prompts: list[str] = []
 
     async def complete(
         self,
@@ -99,6 +100,7 @@ class FakeLlm:
         if model == "design-intent.default":
             return self.intents.pop(0)
         if model == "design-orchestrator.default":
+            self.turn_prompts.append(messages[0]["content"])
             return self.turns.pop(0)
         raise AssertionError(f"unexpected logical model: {model}")
 
@@ -260,6 +262,38 @@ def test_reply_shapes_are_all_accepted() -> None:
     assert orchestrator.parse_turn(json.dumps({"facts": [], "replies": "就说一句"})).replies == [
         "就说一句"
     ]
+
+
+@pytest.mark.asyncio
+async def test_uploading_an_image_closes_the_floorplan_gap_in_the_same_turn() -> None:
+    """图刚传上来就不该再问"你有户型图吗"。
+
+    真机问出过"您家在哪个小区？几室几厅？"——成因是缺口按上一轮末的状态算，而"他传了图"
+    这件事等着模型去抽，有一轮延迟。会话侧自己就知道这条入站是图片，**代码知道的事不问模型**。
+    """
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")],
+        turns=[turn_json([], "收到户型图啦，我这就开始识别～")],
+    )
+    inbound = make_inbound(None, "in-img")
+    # 只要内容类型是图片就够——会话侧判的是"这条是不是图"，不是图里有什么
+    # （对象键要等本仓的 contracts 依赖从 v0.2.0 抬到带 objectKey 那一版，时点＝做上报业务侧那一段）
+    inbound.image.SetInParent()
+
+    await service.ingest_message(inbound, sender, llm)
+
+    project = await find_or_create_project(conversation_ref())
+    assert "floorplan" not in orchestrator.missing_slots(project)
+    # 递给模型的那段上下文里，也就不会再出现"还没有户型图"
+    assert "还没有户型图" not in llm.turn_prompts[0]
+
+
+def test_floorplan_gap_never_asks_for_what_the_image_answers() -> None:
+    """不问小区名、不问几室几厅、不问面积——图到手这些都算得出来。"""
+    hint = orchestrator._SLOT_HINTS["floorplan"]
+
+    assert "不要问小区名" in hint and "不要问几室几厅" in hint
 
 
 def test_scale_anchor_is_not_a_gap_but_floor_area_ratio_is() -> None:

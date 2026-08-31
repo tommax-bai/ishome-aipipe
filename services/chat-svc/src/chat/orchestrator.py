@@ -126,7 +126,11 @@ target_id / property 必须用下列口径：
 # 裁决 2026-08-30），**推算是主路径不是降级路径**。四级里唯一要图外信息的是得房率，而得房率是
 # 业主看一眼合同就知道的数，不用弯腰拿卷尺。用户主动给的实测尺寸照收（见提示词事实口径）。
 _SLOT_HINTS: dict[str, str] = {
-    "floorplan": "户型（小区名+户型，或标记待上传户型图）",
+    "floorplan": (
+        "还没有户型图：请他发一张户型图的照片或截图。"
+        "**不要问小区名、不要问几室几厅、不要问面积**——图到手这些都算得出来，"
+        "问他一遍等于让他替系统干活"
+    ),
     "floor_area_ratio": (
         "得房率（问的时候同一句话里把台阶给够：不知道的话让我们自己推断就好。"
         "他说不知道就记 unknown，不要再问第二次）"
@@ -233,6 +237,23 @@ def _coerce_fact(item: object) -> Fact | None:
         return Fact.model_validate(payload)
     except ValidationError:
         return None
+
+
+def upload_fact() -> Fact:
+    """用户传了户型图这件事，**由代码记，不由模型抽**。
+
+    会话侧自己就知道这条入站消息是图片（统一消息的内容类型摆在那儿），不需要模型来告诉它。
+    交给模型抽有一轮延迟：缺口是按上一轮末的状态算的，于是**图刚传上来、系统还在问"你有户型图吗"**
+    ——真机就是这么问出"您家在哪个小区？几室几厅？"的。同"几何不由 LLM 决定"的同一条理由：
+    代码知道的事不问模型。
+    """
+    return Fact(
+        target_id="floorplan",
+        property="source",
+        value="uploaded",
+        cognitive_state="observed",
+        source="channel_upload",
+    )
 
 
 def merge_facts(project: ProjectState, new_facts: Sequence[Fact]) -> list[Fact]:
