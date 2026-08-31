@@ -17,7 +17,7 @@ from chat import orchestrator, service
 from chat.channel_client import ChannelClient
 from chat.grpc_server import build_server
 from chat.intent import parse_intent, route_intent
-from chat.models import ConversationRef, ProjectState
+from chat.models import ConversationRef, Fact, ProjectState
 from chat.repo import active_store, find_or_create_project, reset_conversations, reset_messages
 from chat.repo.memory import MemoryChatStore
 from ishome.channel.v1 import message_pb2
@@ -302,6 +302,43 @@ def test_floorplan_gap_never_asks_for_what_the_image_answers() -> None:
     hint = orchestrator._SLOT_HINTS["floorplan"]
 
     assert "不要问小区名" in hint and "不要问几室几厅" in hint
+
+
+def test_context_given_to_the_model_carries_no_internal_identifiers() -> None:
+    """递给模型的已知信息用客户语域写，**不带字段名、取值码与单位缩写**。
+
+    真机漏过一次：上下文里写着 `floorplan/source = upload_pending（observed）`，
+    模型原样转述给业主"您提到的户型图我们已收到（来源：upload_pending）"。
+    **它看不见就说不出**——与其加一条"不许说内部字段名"的禁令，不如根本不给它看。
+    """
+    lines = [
+        orchestrator._render_fact_line(f)
+        for f in (
+            orchestrator.upload_fact(),
+            Fact(
+                target_id="floorplan",
+                property="building_area_sqm",
+                value=138,
+                unit="sqm",
+                cognitive_state="observed",
+                source="user_message",
+            ),
+            Fact(
+                target_id="scale-anchor",
+                property="entry_door_width",
+                value=900,
+                unit="mm",
+                cognitive_state="inferred",
+                source="orchestrator_inference",
+            ),
+        )
+    ]
+    rendered = "\n".join(lines)
+
+    for leak in ("upload_pending", "uploaded", "building_area_sqm", "sqm", "observed", "inferred"):
+        assert leak not in rendered, leak
+    assert "建筑面积：138 平方米" in rendered
+    assert "入户门宽实测" in rendered
 
 
 def test_only_area_and_floorplan_are_ever_asked_for() -> None:

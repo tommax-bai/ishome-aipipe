@@ -142,7 +142,22 @@ _DISPLAY_LABELS: dict[tuple[str, str], str] = {
     ("household", "composition"): "家庭结构",
 }
 
-_SOURCE_DISPLAY: dict[str, str] = {"library": "户型库检索", "upload_pending": "待上传户型图"}
+_ANCHOR_PARTS: dict[str, str] = {
+    "entry_door_width": "入户门宽",
+    "bedroom_door_width": "卧室门宽",
+    "wall_length": "墙长",
+    "window_width": "窗宽",
+}
+"""业主主动给实测尺寸时，那个部位叫什么。表外的不猜——认不出就只说"实测尺寸"。"""
+
+_UNIT_DISPLAY: dict[str, str] = {"sqm": " 平方米", "mm": " 毫米", "percent": "%"}
+"""单位也是内部写法：`138sqm` 递进去，模型就照着说出来了。表外的原样出，不猜。"""
+
+_SOURCE_DISPLAY: dict[str, str] = {
+    "library": "户型库检索",
+    "upload_pending": "待上传户型图",
+    "uploaded": "业主已发来户型图",
+}
 
 
 async def step(
@@ -160,7 +175,14 @@ async def step(
     context = ("已收集的信息：\n" + ("\n".join(state_lines) if state_lines else "（暂无）")) + (
         f"\n\n现在还缺这一件（**只问它，别的下一轮再说**）：\n- {_SLOT_HINTS[missing[0]]}"
         if missing
-        else ""
+        # 缺口清空之后必须**明说问完了**：不说的话，"针对缺口提问"那条规则会让它自己编一个
+        # 要问的——真机上它问了"家里常住几口人、主要诉求是什么"，而系统紧接着的下一条就是
+        # "我按 4 个人来安排…不说也没关系"，等于先为难他再说不用。
+        else (
+            "\n\n**该要的都要到了：这一轮不要再向他要任何信息**，"
+            "不要问人数、诉求、预算、小区名，也不要提出下一步要他配合的事。"
+            "这些系统自己会推，推完了会主动告诉他按什么做的。他想补充什么，等他自己说。"
+        )
     )
     messages: list[Mapping[str, str]] = [
         {"role": "system", "content": _SYSTEM_PROMPT + "\n\n" + context}
@@ -347,7 +369,9 @@ def _display_label(fact: Fact) -> str:
     if label:
         return label
     if fact.target_id == "scale-anchor":
-        return f"比例锚点（{fact.property}）"
+        part = _ANCHOR_PARTS.get(fact.property)
+        # 认不出的部位就只说"实测尺寸"——**宁可少说一个词，不把内部名说给业主**
+        return f"{part}实测" if part else "实测尺寸"
     if fact.property == "core_need":
         return "核心诉求"
     if fact.property == "constraint":
@@ -362,14 +386,34 @@ def _display_value(fact: Fact) -> str:
     elif isinstance(value, bool):
         rendered = "是" if value else "否"
     else:
-        rendered = f"{value}{fact.unit or ''}"
+        rendered = f"{value}{_UNIT_DISPLAY.get(fact.unit or '', fact.unit or '')}"
     # 数据诚实展示（§8.1）：inferred 值带"约"——服务于用户理解
     return f"约{rendered}" if fact.cognitive_state == "inferred" else rendered
 
 
+_STATE_WORDS: dict[str, str] = {
+    "observed": "他说的",
+    "inferred": "系统推的",
+    "user_confirmed": "他确认过的",
+    "measured": "量过的",
+    "verified": "核过的",
+}
+
+
 def _render_fact_line(fact: Fact) -> str:
-    kind = "结构类·仅线索" if fact.fact_kind == "structural" else fact.cognitive_state
-    return f"- {fact.target_id}/{fact.property} = {fact.value}{fact.unit or ''}（{kind}）"
+    """递给模型的那份已知信息，**用客户语域写，不用内部字段名**。
+
+    首版直接把 `floorplan/source = upload_pending（observed）` 喂进去——真机上模型原样
+    转述给了业主："您提到的户型图我们已收到（来源：upload_pending）"。
+    **它看不见就说不出**：与其加一条"不许说内部字段名"的禁令，不如根本不给它看
+    （同"推导步看不见落点的值所以产不出数字"）。
+    """
+    kind = (
+        "结构类·仅线索"
+        if fact.fact_kind == "structural"
+        else _STATE_WORDS.get(fact.cognitive_state, fact.cognitive_state)
+    )
+    return f"- {_display_label(fact)}：{_display_value(fact)}（{kind}）"
 
 
 def _strip_code_fence(raw: str) -> str:
