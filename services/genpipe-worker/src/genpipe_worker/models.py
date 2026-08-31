@@ -186,6 +186,10 @@ class PlanOpening(_FloorplanModel):
     start_ratio: float
     end_ratio: float
     is_on_outer_wall: bool
+    connects: list[str] = Field(default_factory=list)
+    """这个洞两侧的房间名。判洞时本来就要看两侧属谁（"两边都是同一间"才判得出那不是门），
+    结果一直没往外给——而"厨房和餐厅之间是通的"这类说明，根据就在这儿。
+    外墙那一侧、以及没归着的那一侧不进列表，所以外墙上的洞通常只有一个名字。"""
 
 
 class RoomOutline(_FloorplanModel):
@@ -234,6 +238,21 @@ class FloorplanGeometry(_FloorplanModel):
     openings: list[PlanOpening] = Field(default_factory=list)
     rooms: list[RoomOutline] = Field(default_factory=list)
     cell_coverage_ratio: float = 0.0
+
+
+class PlanFact(_FloorplanModel):
+    """一条**带 id 的结构化户型事实**：从几何算出来、读者看图即可自验的那种。
+
+    空间推理背书通道的被引对象（用户裁决 2026-08-30）：说明句与报告里讲户型的句子必须声明
+    引用了哪几条 `fact_id`，引用不到包内存在的 id 即打回——**不是禁止模型编，是编了引不到**。
+
+    `statement` 是这条事实的可读形态，**给模型读，不进客户产物**：句子里的数是算出来的、
+    模板是确定的。业主看到的话由写作步产出，且必须引用这里的 id。
+    """
+
+    fact_id: str
+    subject: str
+    statement: str
 
 
 class FeatureVerdict(_FloorplanModel):

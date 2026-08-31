@@ -134,6 +134,9 @@ type = "layers"
 # `floorplan_geometry` 与它们同层，同一条理由的第三次应用：**几何不由 LLM 决定**——
 # 墙在哪儿、洞在哪儿、边界在哪儿全部从像素里算，它够不到网关客户端，所以"算得对不对"
 # 不是要人相信的话。三个 CLI 入口同层互不可见（各自是一件工具的全部）。
+# `floorplan_facts`（几何 → 带 id 的结构化户型事实）在几何之上、与网关客户端同层互不可见：
+# 同一条理由的第四次应用——**事实不由 LLM 决定**。这批事实的定义就是"读者看图即可自验"的那种，
+# 它们够不到网关，所以"这条事实是不是编的"不是要人相信的话；模型该做的是拿它们去推理，不是产它们。
 # `orientation` 与 `layout_features` 与 `llm_client` 同层互不可见，是两件事的代码形态：
 # **朝向换算与闭集校验都不碰模型调用**——它们若能碰到网关客户端，"没调模型时算得对不对/
 # 校验成不成立"就成了要人相信的话，而这两件恰恰是为了不必相信才搬进代码的。
@@ -142,7 +145,8 @@ layers = [
   "activities",
   "floorplan_parse",
   "floorplan_survey | floorplan_regions",
-  "orientation | llm_client | layout_features | floorplan_geometry",
+  "orientation | llm_client | layout_features | floorplan_facts",
+  "floorplan_geometry",
   "models",
 ]
 containers = ["genpipe_worker"]
@@ -200,6 +204,21 @@ forbidden_modules = [
   "genpipe_worker.floorplan_cli",
   "httpx",
   "PIL",
+  "temporalio",
+]
+
+[[tool.importlinter.contracts]]
+name = "户型事实纯确定性：floorplan_facts 不碰模型调用、不碰网络——事实不由 LLM 决定"
+type = "forbidden"
+source_modules = ["genpipe_worker.floorplan_facts"]
+forbidden_modules = [
+  "genpipe_worker.llm_client",
+  "genpipe_worker.floorplan_parse",
+  "genpipe_worker.floorplan_survey",
+  "genpipe_worker.floorplan_regions",
+  "genpipe_worker.activities",
+  "genpipe_worker.worker",
+  "httpx",
   "temporalio",
 ]
 

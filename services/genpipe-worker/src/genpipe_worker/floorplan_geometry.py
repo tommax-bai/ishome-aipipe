@@ -844,7 +844,7 @@ def _grow_rooms(
 
 
 def _walls_and_openings(
-    grid: _Grid, room_at: list[list[int]]
+    grid: _Grid, room_at: list[list[int]], room_names: Sequence[str]
 ) -> tuple[list[PlanWall], list[PlanOpening]]:
     """沿每条墙线走一遍：连着的墙体是墙段，中间的断口是**候选**洞。
 
@@ -889,7 +889,14 @@ def _walls_and_openings(
                     while at <= last and at not in present:
                         at += 1
                     opening = _to_opening(
-                        grid, axis_name, position, gap_start, at - 1, long_side_px, room_at
+                        grid,
+                        axis_name,
+                        position,
+                        gap_start,
+                        at - 1,
+                        long_side_px,
+                        room_at,
+                        room_names,
                     )
                     if opening is not None:
                         openings.append(opening)
@@ -963,6 +970,7 @@ def _to_opening(
     end: int,
     long_side_px: float,
     room_at: list[list[int]],
+    room_names: Sequence[str],
 ) -> PlanOpening | None:
     """一个断口是不是洞：够长，且两侧属于不同的地方。
 
@@ -986,6 +994,7 @@ def _to_opening(
         start_ratio=start / along,
         end_ratio=end / along,
         is_on_outer_wall=OUTSIDE_ROOM in (near, far),
+        connects=[room_names[side] for side in (near, far) if 0 <= side < len(room_names)],
     )
 
 
@@ -1027,7 +1036,7 @@ def extract_geometry(image_bytes: bytes, regions: Sequence[RoomRegion]) -> Floor
 
     rooms = _to_room_outlines(grid, cells, labels)
     room_at = _room_bitmap(grid, cells, labels, [room.name for room in rooms])
-    walls, openings = _walls_and_openings(grid, room_at)
+    walls, openings = _walls_and_openings(grid, room_at, [room.name for room in rooms])
     coverage_ratio = _cell_coverage_ratio(grid, cells, labels)
     if coverage_ratio < MIN_CELL_COVERAGE_RATIO:
         raise FloorplanGeometryError(
