@@ -227,6 +227,28 @@ def partition_unit_outcomes(
     return fanout
 
 
+def merge_retried_units(base: UnitFanoutOutcome, retried: UnitFanoutOutcome) -> UnitFanoutOutcome:
+    """把一轮"只重开失败域"的归并结果并回上一轮（纯函数，可直测）。
+
+    - **成功单元累加**：先前成的章不重开，原样留着进装配（重开的是章不是册）；
+    - **失败三件套整体换成本轮的**（失败域 / 失败单元 / 派发失败码）：它们回答的是"最后一次
+      尝试为什么没成"，跨轮累加会读出一个根本没发生过的失败面——某域第一轮失败第二轮成了，
+      它就不该再出现在 failed_domains 里；
+    - **重写轮数按域覆盖**：同一域重开后，观测量取最后一次尝试的轮数（章内重写是 activity 内部
+      的旋钮，混算跨轮总和会把它和重开次数搅成一个数）。
+    """
+    return UnitFanoutOutcome(
+        composed_units=[*base.composed_units, *retried.composed_units],
+        failed_domains=list(retried.failed_domains),
+        failed_units=list(retried.failed_units),
+        dispatch_failures=list(retried.dispatch_failures),
+        rewrite_rounds_by_domain={
+            **base.rewrite_rounds_by_domain,
+            **retried.rewrite_rounds_by_domain,
+        },
+    )
+
+
 def collect_violations(result: dict[str, Any]) -> list[dict[str, Any]]:
     """取 activity 的违规清单（纯函数）：原样透传不改写——判据编号归 release 数据，编排不解释。"""
     raw = result.get("violations")
@@ -443,7 +465,8 @@ class GenerationTaskWorkflow:
 
 @workflow.defn
 class ReportComposeWorkflow:
-    """报告成文线编排（图 v0.2 §2 第二条流水线）：dom- 单元并行成文 → 页面装配 → 册级校验。
+    """报告成文线编排（图 v0.2 §2 第二条流水线）：dom- 单元并行成文（失败章单独重开）→
+    页面装配 → 册级校验。
 
     图 v0.2 §0 的硬性条件在本类逐条兑现：
 
@@ -474,23 +497,25 @@ class ReportComposeWorkflow:
                     failed_checks=[failure_code],
                 )
 
-        outcomes = await asyncio.gather(
-            *[
-                _execute(
-                    ACTIVITY_REPORT_UNIT_COMPOSE,
-                    {
-                        "domain": domain,
-                        "package": spec.package,
-                        "max_rewrites": spec.max_rewrites,
-                    },
-                    task_queue=spec.queues.reportgen,
-                    start_to_close=_COMPOSE_TIMEOUT,
-                )
-                for domain in spec.domains
-            ],
-            return_exceptions=True,
-        )
-        fanout = partition_unit_outcomes(spec.domains, outcomes)
+        fanout = await self._compose_units(spec, spec.domains)
+
+        # 失败的那一章单独重开（用户裁决 2026-08-31：「失败让重开，我觉得没问题，单独开失败的
+        # 这一张就可以了」）。为什么重开有用——**章失败是随机的不是必然的**：同一份输入连跑五次，
+        # dom-budget 在第 1/3/4 跑失败、第 2/5 跑通过，dom-lighting 只在第 5 跑失败。单章成功率
+        # 约 0.75，六章连乘即整册约 0.18（实测四跑成册 1/4，对得上）；只重开失败章两次，整册可
+        # 拉到约 0.91。整册重来则要把已成的五章连同它们的 LLM 推理一起扔掉，还得再赌一次全过。
+        # 注意这与 `max_rewrites` 是两个旋钮：那个是 activity **章内**的自我修正轮数（≤2 轮，
+        # 图 v0.2 §3 的设计定数，不许私改）；这里是章内轮数耗尽、整章终判 failed 之后，编排侧
+        # 拿同样入参**另起一次派发**。也不能靠 `_ACTIVITY_RETRY` 顶替：那条只在 activity 抛异常
+        # 时生效，而一章过不了检是正常返回 verdict=failed，Temporal 不会重试它。
+        unit_retries_by_domain: dict[str, int] = {}
+        retries_left = max(spec.max_unit_retries, 0)
+        while fanout.failed_domains and retries_left > 0:
+            retries_left -= 1
+            retried_domains = list(fanout.failed_domains)
+            for domain in retried_domains:
+                unit_retries_by_domain[domain] = unit_retries_by_domain.get(domain, 0) + 1
+            fanout = merge_retried_units(fanout, await self._compose_units(spec, retried_domains))
 
         def failed(
             stage: ReportStage,
@@ -508,9 +533,11 @@ class ReportComposeWorkflow:
                 violations=violations or [],
                 failed_checks=failed_checks or [],
                 rewrite_rounds_by_domain=fanout.rewrite_rounds_by_domain,
+                unit_retries_by_domain=unit_retries_by_domain,
             )
 
         if fanout.failed_domains:
+            # 走到这里 = 重开次数也耗尽了（见上方重开理由），以下策略才生效。
             # 失败策略（本编排唯一的策略取舍，理由写在此处以免后人两头下注）：
             # **任一域失败 → 整册失败，不装配、不出"其余页"**。三条理由：
             # ① 下游 report-page-assemble 自身即以 gate-unit-failed 拒收残缺单元集，派过去
@@ -607,4 +634,31 @@ class ReportComposeWorkflow:
             pages=pages,
             book_key=book_key,
             rewrite_rounds_by_domain=fanout.rewrite_rounds_by_domain,
+            unit_retries_by_domain=unit_retries_by_domain,
         )
+
+    async def _compose_units(
+        self, spec: ReportComposeSpec, domains: list[str]
+    ) -> UnitFanoutOutcome:
+        """把给定域并行派往成文 activity 并归并结论（首轮派全集，重开轮只派失败集）。
+
+        入参逐次相同（`package` / `max_rewrites` 不随重开变化）：重开赌的是同一次推理的随机性，
+        改入参就成了"换个题面再试"，那是另一件事，不在这条裁决里。
+        """
+        outcomes = await asyncio.gather(
+            *[
+                _execute(
+                    ACTIVITY_REPORT_UNIT_COMPOSE,
+                    {
+                        "domain": domain,
+                        "package": spec.package,
+                        "max_rewrites": spec.max_rewrites,
+                    },
+                    task_queue=spec.queues.reportgen,
+                    start_to_close=_COMPOSE_TIMEOUT,
+                )
+                for domain in domains
+            ],
+            return_exceptions=True,
+        )
+        return partition_unit_outcomes(domains, outcomes)

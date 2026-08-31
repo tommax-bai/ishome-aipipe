@@ -115,7 +115,15 @@ class ReportComposeSpec(BaseModel):
     """报告数据包原样载荷：schema 归 contracts `rulebook/report_data_package.schema.json`，
     本仓不建模其字段——数字在求值线已算完，成文线只搬运（图 v0.2 §0）。"""
     max_rewrites: int = 2
-    """单元出口过检不合格后的重写轮数上限，随派发下发（图 v0.2 §3：≤2 轮，仍不过即 failed）。"""
+    """单元出口过检不合格后的**章内**重写轮数上限，随派发下发（图 v0.2 §3：≤2 轮，仍不过即
+    failed）。设计定数，不许私改；与 `max_unit_retries` 是两个旋钮，不要混。"""
+    max_unit_retries: int = 2
+    """某章终判 failed 后允许的**整章重开**次数上限（编排侧旋钮，**不下发给 activity**）。
+
+    与 `max_rewrites` 的分工：`max_rewrites` 是一次派发**内部**的自我修正轮数，由 reportgen
+    侧执行；本字段是那一次派发整体失败之后，编排侧拿同样入参**另起一次**派发。之所以有效，
+    是因为章失败是随机的不是必然的（实测同一份输入连跑五次：dom-budget 在第 1/3/4 跑失败、
+    第 2/5 跑通过，dom-lighting 只在第 5 跑失败）。生产调用方不传，走默认。"""
     queues: TaskQueues = Field(default_factory=TaskQueues)
 
 
@@ -153,6 +161,11 @@ class ReportComposeResult(BaseModel):
     failed_checks: list[str] = Field(default_factory=list)
     """编排层失败码（入参违约 / 派发异常 / 结果形态违约），与既有 workflow 同名同义。"""
     rewrite_rounds_by_domain: dict[str, int] = Field(default_factory=dict)
+    """各域**章内**重写轮数（activity 内部的自我修正），语义与 `max_rewrites` 对应。"""
+    unit_retries_by_domain: dict[str, int] = Field(default_factory=dict)
+    """各域**整章重开**次数（编排侧另起派发），语义与 `max_unit_retries` 对应；**只记 >0 的**，
+    空字典 = 这一趟一次都没重开。留着它是为了让"这册是不是靠重开出来的"在结论里直接判得出来——
+    否则真跑成册与一次过成册在结论上长得一模一样，重开是否值得就成了只能猜的事。"""
     book_key: str | None = None
     """出册后册在私有对象存储里的键（`reports/{report_id}/book.html`，contracts
     `registries/object_keys.md`）。**只是回执不是台账**——键由 report_id 确定性推得，

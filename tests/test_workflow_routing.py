@@ -1,7 +1,7 @@
 """两条线的编排纯函数直测（不依赖 Temporal 运行时）：
 
 生成管线——GenerationTask 路由链与机检门禁判定；
-报告成文线——各 dom- 单元并行成文的结果归并与违规透传。
+报告成文线——各 dom- 单元并行成文的结果归并、失败章重开的跨轮归并与违规透传。
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from genpipe.workflows import (
     collect_violations,
     describe_failure,
     evaluate_gate,
+    merge_retried_units,
     partition_unit_outcomes,
     pick_template,
     resolve_step_arg,
@@ -186,6 +187,48 @@ def test_partition_treats_dispatch_error_and_empty_cards_as_failure() -> None:
         "report-unit-compose:dom-storage:no-cards",
     ]
     assert [u["domain"] for u in fanout.composed_units] == ["dom-material"]
+
+
+def test_merge_retried_units_keeps_earlier_successes_and_clears_healed_failures() -> None:
+    """重开成了：成功单元累加，失败面整体换成本轮的——已治好的域不许还留在 failed_domains 里。"""
+    base = partition_unit_outcomes(
+        ["dom-lighting", "dom-budget"],
+        [_unit("dom-lighting"), _unit("dom-budget", verdict="failed", rewrites_used=2)],
+    )
+    retried = partition_unit_outcomes(["dom-budget"], [_unit("dom-budget", rewrites_used=1)])
+    merged = merge_retried_units(base, retried)
+
+    assert [u["domain"] for u in merged.composed_units] == ["dom-lighting", "dom-budget"]
+    assert merged.failed_domains == []
+    assert merged.failed_units == []
+    assert merged.dispatch_failures == []
+    # 章内重写轮数按域取最后一次尝试的值（重开次数是另一个旋钮，不混算进来）
+    assert merged.rewrite_rounds_by_domain == {"dom-lighting": 0, "dom-budget": 1}
+
+
+def test_merge_retried_units_reports_last_attempt_failures_only() -> None:
+    """重开还是不成：失败面是最后一次尝试的，不跨轮累加（否则读出根本没发生过的失败面）。"""
+    base = partition_unit_outcomes(
+        ["dom-lighting", "dom-budget"],
+        [
+            PipelineDataError("report-unit-compose:non-dict-result"),
+            _unit("dom-budget", verdict="failed"),
+        ],
+    )
+    retried = partition_unit_outcomes(
+        ["dom-lighting", "dom-budget"],
+        [
+            _unit("dom-lighting"),
+            _unit("dom-budget", verdict="failed", violations=[{"check": "cr-budget-stale-price"}]),
+        ],
+    )
+    merged = merge_retried_units(base, retried)
+
+    assert merged.failed_domains == ["dom-budget"]
+    assert merged.failed_units == [retried.failed_units[0]]
+    assert merged.failed_units[0]["violations"] == [{"check": "cr-budget-stale-price"}]
+    assert merged.dispatch_failures == []  # 首轮那条派发失败码不跟着走：那一域这轮已经成了
+    assert [u["domain"] for u in merged.composed_units] == ["dom-lighting"]
 
 
 def test_collect_violations_passes_through_and_ignores_broken_shapes() -> None:

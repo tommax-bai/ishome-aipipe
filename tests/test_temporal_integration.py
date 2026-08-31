@@ -3,7 +3,8 @@
 测试 Worker 把 mock activity 实现注册到唯一随机 task queue（spec.queues 全部收拢到
 该队列），覆盖 GenBatchWorkflow 门禁通过 / 不通过自动重生成 / 重试超限失败三条路径，
 GenerationTaskWorkflow 的 atmosphere-visual 路由链，以及 ReportComposeWorkflow 的
-成文线主干与三阶段失败（单元 / 装配 / 册检）。服务器不可达时整体 skip（CI 无 Temporal
+成文线主干、失败章单独重开（重开即过 / 重开耗尽）与三阶段失败（单元 / 装配 / 册检）。
+服务器不可达时整体 skip（CI 无 Temporal
 也能绿）；mock 只存在于测试内，生产 activity 存根保持 NotImplementedError。
 """
 
@@ -342,25 +343,36 @@ async def test_report_compose_fans_out_units_then_assembles_checks_and_renders()
     assert log[-1][1]["package"] == OPAQUE_PACKAGE  # 出册也拿到原包（渲染要靠它解数字引用）
 
 
+def _failed_unit(domain: str, rewrites_used: int = 2) -> dict[str, Any]:
+    """单元成文 mock 的失败形态：章内重写轮数用满仍不过检，正常返回 verdict=failed。
+
+    注意它**不抛异常**——`_ACTIVITY_RETRY` 只对异常生效，这条路径正是"整章重开"要补的缺口。
+    """
+    return {
+        "verdict": "failed",
+        "domain": domain,
+        "cards": [],
+        "violations": [{"check": "cr-budget-stale-price", "detail": "单价过期"}],
+        "rewrites_used": rewrites_used,
+        "releases": [],
+    }
+
+
 async def test_report_compose_unit_failure_stops_before_assemble() -> None:
-    """某域 failed：整册失败，不装配也不出"其余页"——失败单元与其 violations 如实上抛。"""
+    """某域 failed：整册失败，不装配也不出"其余页"——失败单元与其 violations 如实上抛。
+
+    这条只验失败策略本身，故把重开关掉（`max_unit_retries=0`）；重开路径另有两条用例。
+    """
     client = await _client_or_skip()
     log: CallLog = []
 
     def flaky_unit(arg: Any) -> dict[str, Any]:
         if arg["domain"] != "dom-budget":
             return _compose_unit(arg)
-        return {
-            "verdict": "failed",
-            "domain": "dom-budget",
-            "cards": [],
-            "violations": [{"check": "cr-budget-stale-price", "detail": "单价过期"}],
-            "rewrites_used": 2,
-            "releases": [],
-        }
+        return _failed_unit("dom-budget")
 
     queue = f"it-{uuid.uuid4().hex}"
-    spec = _report_spec(queue, ["dom-lighting", "dom-budget"])
+    spec = _report_spec(queue, ["dom-lighting", "dom-budget"], max_unit_retries=0)
     result = await _run_report_compose(
         client, _report_behaviors(**{"report-unit-compose": flaky_unit}), log, spec
     )
@@ -373,8 +385,78 @@ async def test_report_compose_unit_failure_stops_before_assemble() -> None:
     ]
     assert result.pages == []
     assert result.rewrite_rounds_by_domain == {"dom-lighting": 0, "dom-budget": 2}
+    assert result.unit_retries_by_domain == {}  # 关掉重开就一次都不重开
     # 装配/册检一步都不派：下游本就以 gate-unit-failed 拒收，缺域的册在册检必然不合格
     assert [name for name, _ in log] == ["report-unit-compose", "report-unit-compose"]
+
+
+async def test_report_compose_retries_only_the_failed_domain_and_ships_the_book() -> None:
+    """失败的那一章单独重开：只重派失败域，已成的章不重跑；重开后成册，重开次数记在结论里。
+
+    用户裁决 2026-08-31：「失败让重开，我觉得没问题，单独开失败的这一张就可以了。」
+    """
+    client = await _client_or_skip()
+    log: CallLog = []
+    attempts: dict[str, int] = {}
+
+    def flaky_once(arg: Any) -> dict[str, Any]:
+        """dom-budget 首次失败、重开即过——章失败是随机的不是必然的（实测形态）。"""
+        domain = arg["domain"]
+        attempts[domain] = attempts.get(domain, 0) + 1
+        if domain == "dom-budget" and attempts[domain] == 1:
+            return _failed_unit(domain)
+        return _compose_unit(arg)
+
+    queue = f"it-{uuid.uuid4().hex}"
+    spec = _report_spec(queue, ["dom-lighting", "dom-budget"])
+    result = await _run_report_compose(
+        client, _report_behaviors(**{"report-unit-compose": flaky_once}), log, spec
+    )
+
+    assert result.verdict == "ok"
+    assert result.failed_domains == []
+    assert result.unit_retries_by_domain == {"dom-budget": 1}
+    assert [page["page_id"] for page in result.pages] == ["page-dom-budget", "page-dom-lighting"]
+    assert result.book_key == f"reports/{spec.report_id}/book.html"
+    # 只重开失败那一章：lighting 派 1 次、budget 派 2 次（整册重来会是 2/2）
+    assert attempts == {"dom-lighting": 1, "dom-budget": 2}
+    unit_args = [arg for name, arg in log if name == "report-unit-compose"]
+    assert len(unit_args) == 3
+    # 重开用同样入参（不改 max_rewrites：那是章内旋钮的设计定数，重开是另一个旋钮）
+    assert all(arg["max_rewrites"] == 2 for arg in unit_args)
+    assert all(arg["package"] == OPAQUE_PACKAGE for arg in unit_args)
+    # 章内重写轮数取最后一次尝试的（budget 首轮 failed 记 2，重开成的那次记 1）——
+    # 它是章内旋钮的观测量，与重开次数各记各的，不混算成一个数
+    assert result.rewrite_rounds_by_domain == {"dom-lighting": 0, "dom-budget": 1}
+
+
+async def test_report_compose_exhausts_unit_retries_then_fails_the_book() -> None:
+    """重开次数耗尽仍失败：整册失败，失败面是**最后一次**尝试的，重开次数照记。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+    attempts: dict[str, int] = {}
+
+    def always_failing_budget(arg: Any) -> dict[str, Any]:
+        domain = arg["domain"]
+        attempts[domain] = attempts.get(domain, 0) + 1
+        return _failed_unit(domain) if domain == "dom-budget" else _compose_unit(arg)
+
+    queue = f"it-{uuid.uuid4().hex}"
+    spec = _report_spec(queue, ["dom-lighting", "dom-budget"], max_unit_retries=2)
+    result = await _run_report_compose(
+        client, _report_behaviors(**{"report-unit-compose": always_failing_budget}), log, spec
+    )
+
+    assert result.verdict == "failed"
+    assert result.failed_stage == "unit-compose"
+    assert result.failed_domains == ["dom-budget"]
+    assert result.failed_units[0]["domain"] == "dom-budget"
+    assert result.pages == []
+    assert result.unit_retries_by_domain == {"dom-budget": 2}
+    # 首轮 + 两次重开 = budget 派 3 次；lighting 首轮就成了，一次都不重派
+    assert attempts == {"dom-lighting": 1, "dom-budget": 3}
+    # 重开耗尽才判整册失败，装配/册检/出册仍一步都不派
+    assert [name for name, _ in log] == ["report-unit-compose"] * 4
 
 
 async def test_report_compose_page_assemble_failure_surfaces_violations() -> None:
