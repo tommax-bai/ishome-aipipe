@@ -506,6 +506,148 @@ def _flood_inside(grid: _Grid, sealed: Bitmap) -> Bitmap:
     return [[not outside[y][x] for x in range(grid.width_px)] for y in range(grid.height_px)]
 
 
+MIN_OUTLINE_RUN_PX = 3
+"""外轮廓上一段最短多少像素才算数：再短就是掩膜边缘的锯齿，不是一段墙。"""
+
+_MIN_OUTLINE_THICKNESS_PX = 4
+"""一段墙像素都量不到、且全图也没有可借的中位数时，外轮廓按这个厚度画（兜底的兜底）。"""
+
+OUTLINE_SKIN_PX = 3
+"""量墙厚前允许跨过的"皮"：`is_inside` 的边界是封缝之后的结果，可能比真墙外沿再往外一两像素。"""
+
+
+def _outline_runs(is_edge: Sequence[bool]) -> list[tuple[int, int]]:
+    """沿一条线扫出连续的边界段。短到只剩锯齿的丢掉。"""
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for at, edge in enumerate(is_edge):
+        if edge:
+            start = at if start is None else start
+        elif start is not None:
+            if at - start >= MIN_OUTLINE_RUN_PX:
+                runs.append((start, at - 1))
+            start = None
+    if start is not None and len(is_edge) - start >= MIN_OUTLINE_RUN_PX:
+        runs.append((start, len(is_edge) - 1))
+    return runs
+
+
+def _band_depth_px(grid: _Grid, axis: PlanAxis, position: int, along: int, step: int) -> int:
+    """从边界往里走，墙有多厚就走多远。
+
+    **问的是同向墙不是原掩膜**：一条横墙的上沿往下走，若问原掩膜，会顺着与它相交的那条竖墙
+    一路走到底——首版就量出过一段"厚 242px 的外墙"。同一个坑《追记九》在判洞时踩过一次
+    （"横穿过去的那条墙也答有"），grid 为此备了按轴向分开的墙体图，这里照用。
+
+    边界是 `is_inside` 的边界、也就是墙的外沿，而封缝那一步可能让它比真墙外沿再往外一点点；
+    因此**允许先跨过几像素的皮**再开始数，跨不过去才算这一点上没墙。
+    """
+    band = grid.parallel_wall[axis]
+    depth = 0
+    at = position
+    limit = grid.width_px if axis == "vertical" else grid.height_px
+    skin = OUTLINE_SKIN_PX
+    while 0 <= at < limit:
+        hit = band[along][at] if axis == "vertical" else band[at][along]
+        if not hit:
+            if depth > 0 or skin <= 0:
+                break
+            skin -= 1
+        else:
+            depth += 1
+        at += step
+    return depth
+
+
+def _measure_depth_px(
+    grid: _Grid, axis: PlanAxis, position: int, run: tuple[int, int], step: int
+) -> int:
+    """这一段边界上墙有多厚（取沿线若干点的中位数，躲开单点噪声）。0 = 这一段上没有墙像素。"""
+    start, end = run
+    depths = sorted(
+        _band_depth_px(grid, axis, position, along, step)
+        for along in range(start, end + 1, max(1, (end - start) // 8 or 1))
+    )
+    return depths[len(depths) // 2]
+
+
+def _outline_wall(
+    grid: _Grid, axis: PlanAxis, position: int, run: tuple[int, int], step: int, depth: int
+) -> PlanWall:
+    """一段边界 → 一段外墙。位置取墙带的中心线，与 `walls` 同一口径（都是墙心）。"""
+    start, end = run
+    across = float(grid.width_px if axis == "vertical" else grid.height_px)
+    along_px = float(grid.height_px if axis == "vertical" else grid.width_px)
+    return PlanWall(
+        axis=axis,
+        position_ratio=(position + step * (depth - 1) / 2) / across,
+        start_ratio=start / along_px,
+        end_ratio=end / along_px,
+        thickness_ratio=depth / across,
+    )
+
+
+def _trace_outline(grid: _Grid) -> list[PlanWall]:
+    """户型外轮廓，按外墙的**中心线**给出，与 :func:`_build_wall_lines` 同一口径。
+
+    **为什么 `walls` 不够**：那是网格投票出来的线，投不上票的外墙不在里面——飘窗那种墙往外
+    折一个台阶的段，整段会被读成"洞"，台阶本身那截短墙又短到投不出线。首个真实样例
+    92㎡ 九个飘窗，**外轮廓只剩 64% 有墙**，母版画出来外圈是漏的。这个洞不是"再调调阈值"
+    能补的：轴对齐的线模型表达不了台阶，只能另给一条来路。
+
+    来路就是 `is_inside`——它是从图边向内漫灌灌不到的地方，边界正是外墙的外沿，
+    **本来就是从像素里算出来的**（"墙在哪儿全部从像素里算"这条没有松动）。
+    沿边界扫出连续段、往里量墙带有多厚，得到的就是外墙。
+
+    与 `walls` 重合的那些段照出不去重：两边都是墙、画出来是同一笔黑；**去重要判"这两段是不是
+    同一道墙"，那是又一个会错的判断**，而重复画一遍没有任何代价。
+    """
+    inside = grid.is_inside
+    found: list[tuple[PlanAxis, int, tuple[int, int], int, int]] = []
+    for x in range(grid.width_px):
+        for step in (-1, 1):
+            neighbour = x - step  # step=+1 时边界在左侧，往右量厚度；step=-1 反之
+            outside_here = not 0 <= neighbour < grid.width_px
+            edges = [
+                inside[y][x] and (outside_here or not inside[y][neighbour])
+                for y in range(grid.height_px)
+            ]
+            for run in _outline_runs(edges):
+                found.append(
+                    ("vertical", x, run, step, _measure_depth_px(grid, "vertical", x, run, step))
+                )
+    for y in range(grid.height_px):
+        row = inside[y]
+        for step in (-1, 1):
+            other = y - step
+            neighbour_row = inside[other] if 0 <= other < grid.height_px else None
+            edges = [
+                row[x] and (neighbour_row is None or not neighbour_row[x])
+                for x in range(grid.width_px)
+            ]
+            for run in _outline_runs(edges):
+                found.append(
+                    (
+                        "horizontal",
+                        y,
+                        run,
+                        step,
+                        _measure_depth_px(grid, "horizontal", y, run, step),
+                    )
+                )
+
+    # 量不到墙的那些段照出，厚度借用其他外墙的中位数——**边界在那儿是事实，墙像素不在是画法**：
+    # 飘窗在楼书图上画的是两条细窗线，去家具线那一步的开运算把它们连同尺寸线一起抹了，
+    # 于是那几条边一个墙像素都不剩。首个真实样例四个飘窗，外轮廓因此缺了整整四条边。
+    # 丢掉它们等于把户型画成漏风的，而它们是不是"墙"这件事，洞的清单已经如实标着了。
+    measured = sorted(depth for *_, depth in found if depth > 0)
+    fallback = measured[len(measured) // 2] if measured else _MIN_OUTLINE_THICKNESS_PX
+    return [
+        _outline_wall(grid, axis, position, run, step, depth or fallback)
+        for axis, position, run, step, depth in found
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 四、房间
 # ---------------------------------------------------------------------------
@@ -895,6 +1037,7 @@ def extract_geometry(image_bytes: bytes, regions: Sequence[RoomRegion]) -> Floor
             ]
         )
     return FloorplanGeometry(
+        outline=_trace_outline(grid),
         frame_width_px=width_px,
         frame_height_px=height_px,
         plan_box=(

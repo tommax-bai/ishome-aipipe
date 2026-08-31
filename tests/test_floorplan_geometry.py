@@ -162,6 +162,21 @@ def test_overlay_renders_at_source_size() -> None:
         assert overlay.size == _IMAGE_SIZE_PX
 
 
+def test_outline_closes_even_where_the_drawing_has_no_wall_pixels() -> None:
+    """外轮廓是户型边界，不是"墙像素在哪儿"——飘窗那种细窗线被去家具线抹掉，边界仍在。
+
+    母版拿它画外圈；丢掉量不到墙的那些段，等于把户型画成漏风的（首个真实样例四条飘窗边，
+    外轮廓只剩 64% 有墙）。是不是实墙由洞的清单如实标着，不靠外轮廓表达。
+    """
+    geometry = extract_geometry(_two_room_plan(), _regions())
+
+    assert geometry.outline, "外轮廓一段都没有"
+    assert all(wall.thickness_ratio > 0 for wall in geometry.outline), "外轮廓不许出零厚的墙"
+    # 四条边都得有人管：竖的横的各至少两段（左右、上下）
+    axes = [wall.axis for wall in geometry.outline]
+    assert axes.count("vertical") >= 2 and axes.count("horizontal") >= 2
+
+
 def test_geometry_carries_the_frame_it_is_normalised_against() -> None:
     """光有比例画不出形状：x 按图宽归一、y 按图高归一，两个方向除的不是同一个数。
 

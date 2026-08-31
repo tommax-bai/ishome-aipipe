@@ -213,6 +213,13 @@ class FloorplanGeometry(_FloorplanModel):
     它是"各房间面积之和 ≈ 图内轮廓面积"那道免费自检的具体形态（拍板清单 §〇 2026-08-30）——
     对不上就是边界提取有问题，**响亮失败**，不把没把握的结构往下游传（红线一）。
 
+    `outline` 是**户型外轮廓那一圈墙**，与 `walls` 分列两处：`walls` 是网格投票出来的线，
+    投不上票的外墙不在里面——飘窗那种墙往外折一个台阶的段整段被读成"洞"，台阶本身那截短墙
+    又短到投不出线。首个真实样例外轮廓只剩 64% 有墙，母版画出来外圈是漏的。两处都是墙、
+    画出来是同一笔黑，重合的段照出不去重（去重要判"这两段是不是同一道墙"，那是又一个会错的
+    判断，而重复画一遍没有代价）。**洞只挂在 `walls` 上**：洞是网格上判出来的，外轮廓这条路
+    不产生洞。
+
     `frame_*_px` 是**这一整套比例的参照系**：x 按图宽归一、y 按图高归一，两个方向除的不是
     同一个数，所以**光有比例画不出正确形状**——不知道原图多宽多高，一张长方形的户型会被画成
     正方形。它不是"顺带记一下原图多大"，是消费方复原比例的必要条件，因此放在几何产物里面、
@@ -222,6 +229,7 @@ class FloorplanGeometry(_FloorplanModel):
     frame_width_px: int = 0
     frame_height_px: int = 0
     plan_box: tuple[float, float, float, float]
+    outline: list[PlanWall] = Field(default_factory=list)
     walls: list[PlanWall] = Field(default_factory=list)
     openings: list[PlanOpening] = Field(default_factory=list)
     rooms: list[RoomOutline] = Field(default_factory=list)
