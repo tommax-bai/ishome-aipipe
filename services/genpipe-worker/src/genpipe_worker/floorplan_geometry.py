@@ -895,6 +895,8 @@ def extract_geometry(image_bytes: bytes, regions: Sequence[RoomRegion]) -> Floor
             ]
         )
     return FloorplanGeometry(
+        frame_width_px=width_px,
+        frame_height_px=height_px,
         plan_box=(
             grid.left_px / width_px,
             grid.top_px / height_px,

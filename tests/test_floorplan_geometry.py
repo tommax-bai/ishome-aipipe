@@ -162,8 +162,29 @@ def test_overlay_renders_at_source_size() -> None:
         assert overlay.size == _IMAGE_SIZE_PX
 
 
+def test_geometry_carries_the_frame_it_is_normalised_against() -> None:
+    """光有比例画不出形状：x 按图宽归一、y 按图高归一，两个方向除的不是同一个数。
+
+    不给参照系，一张长方形的户型会被消费方画成正方形——所以参照系与比例同进同出。
+    这**不违反"产物里不许出现绝对尺寸"**（下一条）：那条禁的是没有比例尺就冒出来的真实
+    世界尺寸（毫米、米），而参照系是像素、是坐标系本身，两回事。
+    """
+    geometry = extract_geometry(_two_room_plan(), _regions())
+
+    assert (geometry.frame_width_px, geometry.frame_height_px) == _IMAGE_SIZE_PX
+    # 消费方按参照系还原形状：图幅的宽高比得跟原图上量出来的一致
+    left, top, right, bottom = geometry.plan_box
+    aspect = ((right - left) * geometry.frame_width_px) / (
+        (bottom - top) * geometry.frame_height_px
+    )
+    assert aspect == pytest.approx(1.0, abs=0.35), "两室样例的图幅接近方形"
+
+
 def test_geometry_carries_no_absolute_size() -> None:
-    """产物里不许出现绝对尺寸：坐标全在 0~1，比例尺是报告那条线的事，出图不需要。"""
+    """产物里不许出现绝对尺寸：坐标全在 0~1，比例尺是报告那条线的事，出图不需要。
+
+    参照系（`frame_*_px`）不在此列——它是像素、是这套比例的分母，不是真实世界的尺寸。
+    """
     geometry = extract_geometry(_two_room_plan(), _regions())
 
     values = [

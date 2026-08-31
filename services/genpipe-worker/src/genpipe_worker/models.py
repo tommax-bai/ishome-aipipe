@@ -212,8 +212,15 @@ class FloorplanGeometry(_FloorplanModel):
     `cell_coverage_ratio` 是自证数：房间格拼起来占户型内部自由面积的比例。
     它是"各房间面积之和 ≈ 图内轮廓面积"那道免费自检的具体形态（拍板清单 §〇 2026-08-30）——
     对不上就是边界提取有问题，**响亮失败**，不把没把握的结构往下游传（红线一）。
+
+    `frame_*_px` 是**这一整套比例的参照系**：x 按图宽归一、y 按图高归一，两个方向除的不是
+    同一个数，所以**光有比例画不出正确形状**——不知道原图多宽多高，一张长方形的户型会被画成
+    正方形。它不是"顺带记一下原图多大"，是消费方复原比例的必要条件，因此放在几何产物里面、
+    与比例同进同出，而不是搁在外层的图片信息里（那一块是给人看的出处，不是坐标系）。
     """
 
+    frame_width_px: int = 0
+    frame_height_px: int = 0
     plan_box: tuple[float, float, float, float]
     walls: list[PlanWall] = Field(default_factory=list)
     openings: list[PlanOpening] = Field(default_factory=list)
