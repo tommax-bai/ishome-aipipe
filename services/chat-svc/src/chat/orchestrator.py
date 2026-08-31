@@ -118,26 +118,19 @@ target_id / property 必须用下列口径：
   两条路——默认方案不动任何结构，或提供原始结构图纸/物业文件作为硬证据
 """
 
-# 最小必要输入五槽位（§3.1）；键为槽位标识，值为缺口提示（喂给 LLM 的口径）
+# **业主开头只需要给两样：面积 + 户型图**（用户裁决 2026-08-31）。其余一概推断——
+# 人数、得房率、装修倾向、年龄由 :mod:`chat.assumptions` 从面积算出来，产出之后摊开说、
+# 给他一个改的入口；**给了就用，不给就算，不追问**。形态是"先做出来再让他改"，不是"问齐了再做"。
 #
-# **比例锚点已不在此列**（用户裁决 2026-08-31）：它曾是必答题，而缺口判定只看这条事实在不在、
-# 不看用户说过什么——于是业主答"不方便测量"，下一轮照样再问一遍，真机连问三轮。户型尺寸由
-# 系统按四级优先自己标定（分房间面积标注 > 任一段尺寸标注 > 门洞反标定 > 建筑面积配得房率，
-# 裁决 2026-08-30），**推算是主路径不是降级路径**。四级里唯一要图外信息的是得房率，而得房率是
-# 业主看一眼合同就知道的数，不用弯腰拿卷尺。用户主动给的实测尺寸照收（见提示词事实口径）。
+# 这条一路收窄了三批问法，每一批都是同一种病——**系统在问它自己能算或能推的东西**：
+# 比例锚点（逼他拿卷尺量房）、小区名与几室几厅（图里就写着）、得房率与家庭结构（面积推得出）。
 _SLOT_HINTS: dict[str, str] = {
+    "building_area_sqm": "建筑面积（多少平，他一句话就能说；这是唯一还需要他给的数）",
     "floorplan": (
         "还没有户型图：请他发一张户型图的照片或截图。"
-        "**不要问小区名、不要问几室几厅、不要问面积**——图到手这些都算得出来，"
+        "**不要问小区名、不要问几室几厅、不要问面积以外的任何数**——图到手这些都算得出来，"
         "问他一遍等于让他替系统干活"
     ),
-    "floor_area_ratio": (
-        "得房率（问的时候同一句话里把台阶给够：不知道的话让我们自己推断就好。"
-        "他说不知道就记 unknown，不要再问第二次）"
-    ),
-    "household": "家庭结构（谁住在这个家）",
-    "core_need": "一至三个核心诉求",
-    "no_go": "明确的不可接受项（没有也需用户明确说）",
 }
 
 _DISPLAY_LABELS: dict[tuple[str, str], str] = {
@@ -278,24 +271,28 @@ def merge_facts(project: ProjectState, new_facts: Sequence[Fact]) -> list[Fact]:
 
 
 def missing_slots(project: ProjectState) -> list[str]:
-    """最小必要输入缺口（§3.1 五槽位）。"""
+    """还差业主给的那几样。**只剩两样：面积与户型图**（用户裁决 2026-08-31）。
+
+    面积排在户型图前面：他一句话就说得出，而传图要找文件。先要好说的那个。
+    """
     facts = project.base_facts.facts
     missing: list[str] = []
+    if not any(f.property == "building_area_sqm" for f in facts):
+        missing.append("building_area_sqm")
     has_floorplan = any(
         f.target_id == "floorplan" and f.property in ("estate_name", "source") for f in facts
     )
     if not has_floorplan:
         missing.append("floorplan")
-    # 答过"不知道"也算填过（值 unknown）：问一次就够，78~83% 兜底由标定那一侧接手
-    if not any(f.property == "floor_area_ratio" for f in facts):
-        missing.append("floor_area_ratio")
-    if not any(f.target_id == "household" for f in facts):
-        missing.append("household")
-    if not any(f.property == "core_need" for f in facts):
-        missing.append("core_need")
-    if not any(f.property == "constraint" for f in facts):
-        missing.append("no_go")
     return missing
+
+
+def find_building_area_sqm(project: ProjectState) -> float | None:
+    """业主给的建筑面积。find = 可空（规范 §三：取不到返回 None，不抛）。"""
+    for fact in project.base_facts.facts:
+        if fact.property == "building_area_sqm" and isinstance(fact.value, int | float):
+            return float(fact.value)
+    return None
 
 
 def confirmable_facts(project: ProjectState) -> list[Fact]:

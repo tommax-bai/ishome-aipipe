@@ -122,6 +122,13 @@ class ProjectState(BaseModel):
     phase: ProjectPhase = "preliminary"
     revision: int = 0
     base_facts: BaseFacts = Field(default_factory=BaseFacts)
+    assumptions_told: bool = False
+    """按面积推的那套默认假设，跟他说过没有。
+
+    只说一次：裁决 8-31 的形态是"摊开说 + 给改的入口，给了就用不给就算"，
+    每轮再说一遍就从"告知"变成"催问"了。
+    """
+
     # 确认闭环（§8.2）：当前待确认的 fact_key 清单（会话侧状态，落库归 svc_chat）
     open_confirmation_ids: list[str] = Field(default_factory=list)
     # 最小必要输入（§3.1）是否已全部 user_confirmed——初步方案生成的前置门

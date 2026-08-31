@@ -125,6 +125,22 @@ layers = ["router", "service", "repo", "models"]
 containers = ["genpipe", "chat"]
 
 [[tool.importlinter.contracts]]
+name = "面积推断纯确定性：assumptions 不碰模型调用、不碰网络——数字不由 LLM 决定"
+type = "forbidden"
+source_modules = ["chat.assumptions"]
+forbidden_modules = [
+  "chat.llm_client",
+  "chat.orchestrator",
+  "chat.intent",
+  "chat.service",
+  "chat.router",
+  "chat.repo",
+  "chat.grpc_server",
+  "chat.channel_client",
+  "httpx",
+]
+
+[[tool.importlinter.contracts]]
 name = "worker 内 三个入口 → activities → floorplan_parse → 三步件 → 确定性件 → models 单向"
 type = "layers"
 # 两个顶层入口同层且互不可见（"|" = independent siblings）：`worker` 是 Temporal 入口，

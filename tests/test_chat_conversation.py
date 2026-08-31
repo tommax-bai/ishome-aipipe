@@ -44,7 +44,15 @@ ALL_SLOT_FACTS: list[dict[str, Any]] = [
         "cognitive_state": "observed",
     },
     {
-        # 得房率是四级标定里唯一要图外信息的一级，也是唯一还会开口问的一项
+        # 面积是业主开头唯一还需要给的数（裁决 8-31）
+        "target_id": "floorplan",
+        "property": "building_area_sqm",
+        "value": 138,
+        "unit": "sqm",
+        "cognitive_state": "observed",
+    },
+    {
+        # 得房率不再问了（按面积推 80%），业主主动给的照收
         "target_id": "floorplan",
         "property": "floor_area_ratio",
         "value": 81,
@@ -211,7 +219,7 @@ async def test_fact_extraction_and_cognitive_states() -> None:
         intents=[intent_json("provide_info")],
         turns=[
             turn_json(
-                [ALL_SLOT_FACTS[0], ALL_SLOT_FACTS[3]],
+                [ALL_SLOT_FACTS[0], ALL_SLOT_FACTS[4]],
                 "记下了。想先聊聊家里都有谁住吗？",
             )
         ],
@@ -296,18 +304,16 @@ def test_floorplan_gap_never_asks_for_what_the_image_answers() -> None:
     assert "不要问小区名" in hint and "不要问几室几厅" in hint
 
 
-def test_scale_anchor_is_not_a_gap_but_floor_area_ratio_is() -> None:
-    """不再逼业主拿卷尺量房（用户裁决 2026-08-31）。
+def test_only_area_and_floorplan_are_ever_asked_for() -> None:
+    """业主开头只需要给两样：面积 + 户型图（用户裁决 2026-08-31）。
 
-    比例锚点曾是必答题，缺口判定只看事实在不在、不看用户说过什么——业主答"不方便测量"，
-    下一轮照样再问，真机连问三轮。尺寸由系统按四级优先自己标定，唯一要图外信息的是得房率。
+    这一条收窄了三批问法，每一批都是同一种病——**系统在问它自己能算或能推的东西**：
+    比例锚点（逼他拿卷尺量房）、小区名与几室几厅（图里就写着）、得房率与家庭结构（面积推得出）。
     """
     project = ProjectState(project_id="p-slots", user_id="u-slots")
-    gaps = orchestrator.missing_slots(project)
-    assert "scale_anchor" not in gaps
-    assert "floor_area_ratio" in gaps
 
-    # 业主答"不知道"（值 unknown）也算填过：问一次就够，78~83% 兜底由标定那侧接手
+    assert orchestrator.missing_slots(project) == ["building_area_sqm", "floorplan"]
+
     orchestrator.merge_facts(
         project,
         orchestrator.parse_turn(
@@ -315,16 +321,19 @@ def test_scale_anchor_is_not_a_gap_but_floor_area_ratio_is() -> None:
                 [
                     {
                         "target_id": "floorplan",
-                        "property": "floor_area_ratio",
-                        "value": "unknown",
+                        "property": "building_area_sqm",
+                        "value": 138,
+                        "unit": "sqm",
                         "cognitive_state": "observed",
                     }
                 ],
-                "好，那我们自己推。",
+                "记下了。",
             )
         ).facts,
     )
-    assert "floor_area_ratio" not in orchestrator.missing_slots(project)
+    orchestrator.merge_facts(project, [orchestrator.upload_fact()])
+
+    assert orchestrator.missing_slots(project) == []
 
 
 @pytest.mark.asyncio
@@ -359,101 +368,53 @@ async def test_structural_facts_never_confirmable() -> None:
     # 结构说明**自成一条**：它是另一件事，拼在回话尾巴上正好把那条撑成长文（用户 2026-08-31）
     assert "不能作为设计依据" not in sender.sent[0].text.text
     assert "不能作为设计依据" in sender.sent[1].text.text
-    # 集齐五槽位后出清单：结构类事实不在清单里
+    # 结构类事实永不进可确认集合——口述的结构信息不作设计依据（§8.3）
     await service.ingest_message(make_inbound("其他信息都给你", "in-s2"), sender, llm)
-    checklist = sender.sent[-1].text.text
-    assert checklist.startswith(orchestrator.CHECKLIST_MARKER)
-    assert "load_bearing" not in checklist and "承重" not in checklist
-    # 确认后：结构类事实认知状态原样，永不 user_confirmed
-    await service.ingest_message(
-        make_inbound(None, "in-s3", quick_reply_option=orchestrator.CONFIRM_OPTION_ID),
-        sender,
-        llm,
-    )
     project = await find_or_create_project(conversation_ref())
     structural = [f for f in project.base_facts.facts if f.fact_kind == "structural"]
-    assert structural and all(f.cognitive_state != "user_confirmed" for f in structural)
-    dimensional = [f for f in project.base_facts.facts if f.fact_kind == "dimensional"]
-    assert dimensional and all(f.cognitive_state == "user_confirmed" for f in dimensional)
+    assert structural
+    assert all(f.fact_kind == "dimensional" for f in orchestrator.confirmable_facts(project))
 
 
-# --- 确认清单 ---
+# --- 两样齐了：摊开说假设 ---
 
 
 @pytest.mark.asyncio
-async def test_checklist_quick_reply_when_supported() -> None:
+async def test_assumptions_are_told_once_the_two_inputs_are_in() -> None:
+    """面积与户型图都齐了就把按面积推的那套摊开说，**不出确认清单、不要他按确认**。
+
+    形态是"先做出来再让他改"（裁决 8-31）：给了就用、不给就算。
+    """
     sender = CapturingSender()
     llm = FakeLlm(
         intents=[intent_json("provide_info")],
         turns=[turn_json(ALL_SLOT_FACTS, "都记下了。")],
     )
-    await service.ingest_message(make_inbound("一口气全告诉你"), sender, llm, FixedCapability(True))
-    checklist = sender.sent[-1]
-    assert checklist.WhichOneof("content") == "quick_reply"
-    assert checklist.quick_reply.prompt_text.startswith(orchestrator.CHECKLIST_MARKER)
-    assert "约900mm" in checklist.quick_reply.prompt_text  # inferred 值带"约"（§8.1）
-    option_ids = [o.option_id for o in checklist.quick_reply.options]
-    assert option_ids == [orchestrator.CONFIRM_OPTION_ID, orchestrator.CORRECT_OPTION_ID]
-    project = await find_or_create_project(conversation_ref())
-    assert project.open_confirmation_ids
+
+    await service.ingest_message(make_inbound("138 平，图发你了"), sender, llm)
+
+    told = sender.sent[-1].text.text
+    assert "138 平" in told
+    assert "我按 4 个人来安排" in told  # 138/34 → 4，与用户给的锚点一致
+    assert "80%" in told
+    assert "不说也没关系" in told  # 邀请不是追问
+    assert not any(m.WhichOneof("content") == "quick_reply" for m in sender.sent)
 
 
 @pytest.mark.asyncio
-async def test_checklist_degrades_to_text_without_capability() -> None:
+async def test_assumptions_are_never_repeated() -> None:
+    """只说一次：每轮再说一遍就从"告知"变成"催问"了。"""
     sender = CapturingSender()
     llm = FakeLlm(
-        intents=[intent_json("provide_info")],
-        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。")],
+        intents=[intent_json("provide_info"), intent_json("provide_info")],
+        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。"), turn_json([], "好的。")],
     )
-    await service.ingest_message(
-        make_inbound("一口气全告诉你"), sender, llm, FixedCapability(False)
-    )
-    checklist = sender.sent[-1]
-    assert checklist.WhichOneof("content") == "text"
-    assert checklist.text.text.startswith(orchestrator.CHECKLIST_MARKER)
+    await service.ingest_message(make_inbound("138 平，图发你了", "in-a1"), sender, llm)
+    before = len(sender.sent)
 
+    await service.ingest_message(make_inbound("再说一句", "in-a2"), sender, llm)
 
-@pytest.mark.asyncio
-async def test_confirm_upgrades_to_user_confirmed() -> None:
-    sender = CapturingSender()
-    llm = FakeLlm(
-        intents=[intent_json("provide_info")],
-        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。")],
-    )
-    await service.ingest_message(make_inbound("信息都给你", "in-c1"), sender, llm)
-    await service.ingest_message(make_inbound("确认", "in-c2"), sender, llm)
-    ack = sender.sent[-1].text.text
-    assert ack.startswith(orchestrator.CONFIRM_ACK_MARKER)
-    project = await find_or_create_project(conversation_ref())
-    assert project.minimum_inputs_confirmed
-    assert not project.open_confirmation_ids
-    assert all(
-        f.cognitive_state == "user_confirmed" for f in orchestrator.confirmable_facts(project)
-    )
-
-
-@pytest.mark.asyncio
-async def test_correction_reopens_checklist() -> None:
-    sender = CapturingSender()
-    corrected = {**ALL_SLOT_FACTS[3], "value": "四口之家"}
-    llm = FakeLlm(
-        intents=[
-            intent_json("provide_info"),
-            intent_json("correct_checklist"),
-        ],
-        turns=[
-            turn_json(ALL_SLOT_FACTS, "都记下了。"),
-            turn_json([corrected], "已改为四口之家。"),
-        ],
-    )
-    await service.ingest_message(make_inbound("信息都给你", "in-r1"), sender, llm)
-    await service.ingest_message(make_inbound("家庭结构错了，是四口之家", "in-r2"), sender, llm)
-    checklist = sender.sent[-1].text.text
-    assert checklist.startswith(orchestrator.CHECKLIST_MARKER)
-    assert "四口之家" in checklist
-    project = await find_or_create_project(conversation_ref())
-    assert not project.minimum_inputs_confirmed
-    assert project.open_confirmation_ids
+    assert all("我按" not in m.text.text for m in sender.sent[before:])
 
 
 # --- 幂等与兜底 ---

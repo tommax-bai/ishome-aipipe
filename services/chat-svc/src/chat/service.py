@@ -29,6 +29,7 @@ from ulid import ULID
 
 from chat import intent as intent_router
 from chat import orchestrator
+from chat.assumptions import assumption_text, infer_from_area
 from chat.models import ChatMessage, ConversationRef, ConversationTurn, ProjectState
 from chat.repo import (
     append_history,
@@ -164,19 +165,18 @@ async def _converse(
         # 那一条撑成真机上被吐槽的长文（用户 2026-08-31）
         reply_texts = [*reply_texts, orchestrator.structural_note()]
 
-    if project.minimum_inputs_confirmed or orchestrator.missing_slots(project):
+    if orchestrator.missing_slots(project) or project.assumptions_told:
         return reply_texts, None
 
-    # 最小必要输入集齐：出确认清单（§8.2 文本形态）
-    checklist_text, open_ids = orchestrator.build_checklist_text(project)
-    project.open_confirmation_ids = open_ids
-    logger.info(
-        "confirmation checklist issued: project=%s items=%d", project.project_id, len(open_ids)
-    )
-    texts = reply_texts if turn.replies else []
-    if await _supports_quick_reply(inbound, capability):
-        return texts, checklist_text
-    return [*texts, checklist_text], None
+    # 面积与户型图都齐了：**把按面积推的那套假设摊开说，并给一个改的入口**
+    # （裁决 8-31）。这里不出确认清单、不要他按确认——他给了就用、不给就算，形态是
+    # "先做出来再让他改"。确认闭环那套机制没废，它的时点挪到**真有产出可确认时**。
+    area_sqm = orchestrator.find_building_area_sqm(project)
+    if area_sqm is None:
+        return reply_texts, None
+    project.assumptions_told = True
+    logger.info("assumptions told: project=%s area_sqm=%s", project.project_id, area_sqm)
+    return [*reply_texts, assumption_text(infer_from_area(area_sqm))], None
 
 
 def _pacing_seconds(previous_text: str) -> float:
