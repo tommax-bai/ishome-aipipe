@@ -43,6 +43,7 @@ ALLOWED_VERTICAL_FILES = {
     "floorplan_geometry_cli.py",  # 工具入口，与另两个入口同层互不可见（--survey 可零调用复跑）
     # 2026-08-31 户型事实评审通过（有 import-linter 方向契约）：
     "floorplan_facts.py",  # 几何 → 带 id 的结构化户型事实，纯确定性——空间推理背书通道的地基
+    "floorplan_notes.py",  # 批注生成 + 引用机检：句子归模型、判据归代码（背书通道第一次实装）
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：

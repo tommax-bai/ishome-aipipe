@@ -55,6 +55,22 @@ class LiteLlmVisionClient:
             self._client = httpx.AsyncClient(timeout=self.timeout_seconds)
         return self._client
 
+    async def complete_text(
+        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+    ) -> str:
+        """纯文本补全。**不读图的那一步就别把图递进去**——户型批注读的是算好的事实清单，
+        递图等于给模型第二个可以照着编的来源，而事实这一层的整个用处就是让它只有一个来源。"""
+        return await self._complete(
+            {
+                "model": model,
+                "temperature": temperature,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            }
+        )
+
     async def complete_with_image(
         self,
         model: str,
@@ -86,6 +102,10 @@ class LiteLlmVisionClient:
                 },
             ],
         }
+        return await self._complete(payload)
+
+    async def _complete(self, payload: dict[str, Any]) -> str:
+        """一次补全调用：送出、要回首个 choice 的文本。两种调用形态共用这一段。"""
         try:
             response = await self._http().post(
                 f"{self.base_url}/chat/completions",

@@ -134,6 +134,9 @@ type = "layers"
 # `floorplan_geometry` 与它们同层，同一条理由的第三次应用：**几何不由 LLM 决定**——
 # 墙在哪儿、洞在哪儿、边界在哪儿全部从像素里算，它够不到网关客户端，所以"算得对不对"
 # 不是要人相信的话。三个 CLI 入口同层互不可见（各自是一件工具的全部）。
+# `floorplan_notes`（拿事实去推理、产批注）与解析前两步同层互不可见：它是**用**事实的一侧，
+# 而 `floorplan_facts` 是**产**事实的一侧，两侧分层是"编了引不到"这条机制的结构形态——
+# 产事实那一侧够不到网关，用事实那一侧够不到几何，谁也不能顺手把另一边改成自己想要的样子。
 # `floorplan_facts`（几何 → 带 id 的结构化户型事实）在几何之上、与网关客户端同层互不可见：
 # 同一条理由的第四次应用——**事实不由 LLM 决定**。这批事实的定义就是"读者看图即可自验"的那种，
 # 它们够不到网关，所以"这条事实是不是编的"不是要人相信的话；模型该做的是拿它们去推理，不是产它们。
@@ -144,7 +147,7 @@ layers = [
   "worker | floorplan_cli | floorplan_geometry_cli",
   "activities",
   "floorplan_parse",
-  "floorplan_survey | floorplan_regions",
+  "floorplan_survey | floorplan_regions | floorplan_notes",
   "orientation | llm_client | layout_features | floorplan_facts",
   "floorplan_geometry",
   "models",

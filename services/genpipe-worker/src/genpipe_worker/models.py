@@ -255,6 +255,19 @@ class PlanFact(_FloorplanModel):
     statement: str
 
 
+class PlanNote(_FloorplanModel):
+    """一条挂在房间上的批注：说哪间、说什么、**依据引的是哪几条事实**。
+
+    `cites` 是空间推理背书通道的执行点：一条都没引的句子直接打回，引了包里不存在的 id 同样打回。
+    机检**只保证依据来自解析产出，不保证推理对不对**——同数字那条机制，判推理对不对需要一把
+    这里没有的尺子，而"依据是不是编的"有尺子。
+    """
+
+    room: str
+    text: str
+    cites: list[str] = Field(default_factory=list)
+
+
 class FeatureVerdict(_FloorplanModel):
     """模型对**一条候选标记**的判定：成不成立，以及为什么。
 
