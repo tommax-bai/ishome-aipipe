@@ -14,12 +14,15 @@ TODO(events)：design.fact.confirmed / corrected 经 outbox 上总线（RocketMQ
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
 from chat.models import ConversationTurn, Fact, ProjectState, fact_key
+
+logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_MODEL = "design-orchestrator.default"
 """主对话逻辑模型名（物理映射见 infra LiteLLM 配置）。"""
@@ -97,7 +100,8 @@ target_id / property 必须用下列口径：
   换一件事说就另起一条；**只有一件事要说就只发一条**，不要为了凑数硬拆
 - **不要按长度切**：把同一件事从中间断开比不分更难读
 - 兜底护栏：**一条超过 60 字**就说明这条里塞了不止一件事，回头看看该拆在哪儿
-- 一次只问一件事，禁止问卷式连问
+- **整轮加起来最多一个问号**。想问三件事就只问最要紧的那一件，剩下的下一轮再问——
+  一次问完对你省事，对他是一张问卷
 
 内容：
 - 先回应用户刚说的内容，再针对缺口信息提问
@@ -152,9 +156,14 @@ async def step(
 ) -> OrchestratorTurn:
     """一轮对话编排：抽取事实 + 生成回复（单次 LLM 调用控制延迟与成本）。"""
     state_lines = [_render_fact_line(f) for f in project.base_facts.facts]
+    # **一次只递一个缺口**：模型看不见第二个缺口，就问不出第二个问题。
+    # 提示词里写过"一次只问一件事"，真机两跑都是一轮问三件——纪律禁不住，结构禁得住
+    # （同"推导步看不见落点的值所以产不出数字"）。缺口清单本身不动，判确认闭环还要用整份。
     missing = missing_slots(project)
     context = ("已收集的信息：\n" + ("\n".join(state_lines) if state_lines else "（暂无）")) + (
-        "\n\n仍缺少：\n" + "\n".join(f"- {_SLOT_HINTS[s]}" for s in missing) if missing else ""
+        f"\n\n现在还缺这一件（**只问它，别的下一轮再说**）：\n- {_SLOT_HINTS[missing[0]]}"
+        if missing
+        else ""
     )
     messages: list[Mapping[str, str]] = [
         {"role": "system", "content": _SYSTEM_PROMPT + "\n\n" + context}
@@ -167,28 +176,43 @@ async def step(
 
 
 def parse_turn(raw: str) -> OrchestratorTurn:
-    """容错解析 LLM 输出；坏 JSON 时返回空事实与空回复（service 层兜底文案）。"""
+    """容错解析 LLM 输出；坏 JSON 时返回空事实与空回复（service 层兜底文案）。
+
+    **一条回复都没解析出来时把原文记进日志**：业主那头看到的是兜底话，而日志里若只写
+    "reply sent"，这种失败就是隐形的——真机上正是这样丢了一整轮回复才被发现。
+    """
     try:
         data = json.loads(_strip_code_fence(raw))
     except json.JSONDecodeError:
+        logger.warning("编排输出不是 JSON，本轮回话丢空：%s", raw[:400])
         return OrchestratorTurn()
     facts: list[Fact] = []
     for item in data.get("facts", []) if isinstance(data, dict) else []:
         fact = _coerce_fact(item)
         if fact is not None:
             facts.append(fact)
-    return OrchestratorTurn(facts=facts, replies=_coerce_replies(data))
+    replies = _coerce_replies(data)
+    if not replies:
+        logger.warning("编排输出里没有可用的回复，本轮回话丢空：%s", raw[:400])
+    return OrchestratorTurn(facts=facts, replies=replies)
 
 
 def _coerce_replies(data: object) -> list[str]:
-    """回复数组；模型偶尔回退成单个 reply 字符串，收下当一条——形态退化不至于把话丢了。"""
+    """回复数组。**键名与形态都收宽**：`replies`/`reply` 两个键、数组/单串两种值，四种组合都收。
+
+    真机踩过：模型照做了分条（回了数组），但键名仍写 `reply`——首版只认"replies 是数组、
+    reply 是字符串"这两种，那一种两边都不沾，**整轮回复被丢光**，业主收到的是兜底话。
+    形态收宽的判据：模型的意思清清楚楚，丢掉它的是我们的解析器不是它的输出。
+    """
     if not isinstance(data, dict):
         return []
-    raw = data.get("replies")
-    if isinstance(raw, list):
-        return [item.strip() for item in raw if isinstance(item, str) and item.strip()]
-    single = data.get("reply")
-    return [single.strip()] if isinstance(single, str) and single.strip() else []
+    for key in ("replies", "reply"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+    return []
 
 
 def _coerce_fact(item: object) -> Fact | None:

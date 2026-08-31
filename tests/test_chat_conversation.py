@@ -246,10 +246,20 @@ async def test_replies_go_out_as_separate_messages() -> None:
     assert sender.idempotency_keys == ["reply-in-1-0", "reply-in-1-1"]
 
 
-def test_single_reply_string_still_accepted() -> None:
-    # 模型偶尔回退成旧形态，收下当一条——形态退化不至于把话丢了
-    turn = orchestrator.parse_turn(turn_json([], "就说一句"))
-    assert turn.replies == ["就说一句"]
+def test_reply_shapes_are_all_accepted() -> None:
+    """键名与形态都收宽：`replies`/`reply` 两个键、数组/单串两种值，四种组合都收。
+
+    真机踩过：模型照做了分条（回了数组），但键名仍写 `reply`——首版只认"replies 是数组、
+    reply 是字符串"这两种，那一种两边都不沾，**整轮回复被丢光**，业主收到的是兜底话。
+    丢掉它的是我们的解析器，不是模型的输出。
+    """
+    both = ["收到户型图了", "您家在哪个小区？"]
+    assert orchestrator.parse_turn(json.dumps({"facts": [], "reply": both})).replies == both
+    assert orchestrator.parse_turn(json.dumps({"facts": [], "replies": both})).replies == both
+    assert orchestrator.parse_turn(turn_json([], "就说一句")).replies == ["就说一句"]
+    assert orchestrator.parse_turn(json.dumps({"facts": [], "replies": "就说一句"})).replies == [
+        "就说一句"
+    ]
 
 
 def test_scale_anchor_is_not_a_gap_but_floor_area_ratio_is() -> None:
