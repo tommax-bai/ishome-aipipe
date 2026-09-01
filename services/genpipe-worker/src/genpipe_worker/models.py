@@ -152,6 +152,29 @@ class RoomOrientation(_FloorplanModel):
     facings: list[str] = Field(default_factory=list)
 
 
+class PlanWallBand(_FloorplanModel):
+    """墙上的一段实测墙带：同段内一个厚度，墨宽一变就换段。
+
+    为什么要有它：`PlanWall.thickness_ratio` 是**整条线投票出来的一个数**，而真墙的厚度沿长度
+    会变（次卧右外墙大部分 12px、墙角一截真是 22px）——一个数套给整条线，画出来就是两倍宽的
+    带子（2026-09-01 两轮线稿定罪的共同根因）。段的划分依据**源图逐点实测的墨宽变化**，
+    不是任何模型或猜测。
+
+    `start_ratio`/`end_ratio` 沿墙方向，与 :class:`PlanWall` 的起讫同分母；**相邻两段共用边界**，
+    全部段拼起来正好盖满这段墙，段与段之间没有缝。
+
+    `face_low_ratio`/`face_high_ratio` 是墙带两面的位置（与 `position_ratio` 同分母；竖墙
+    low=西面、high=东面，横墙 low=北面、high=南面），厚度＝两面之差。**面对齐直接写在数值里**：
+    厚度突变处哪一面数值不变，哪一面就是没动的那面——不用另立枚举，消费方照两面画就不会把
+    "贴着走廊变厚"画成"两边同时鼓出来"。
+    """
+
+    start_ratio: float
+    end_ratio: float
+    face_low_ratio: float
+    face_high_ratio: float
+
+
 class PlanWall(_FloorplanModel):
     """母版上的一段墙：轴向、所在位置、起讫，全部归一化到整图（0~1，左上角为原点）。
 
@@ -160,6 +183,10 @@ class PlanWall(_FloorplanModel):
 
     `axis` 为 `vertical` 时 `position_ratio` 是 x、`start_ratio`/`end_ratio` 是 y 的起讫；
     `horizontal` 时反过来。`thickness_ratio` 是墙厚（承重墙与隔墙在图上厚度不同，母版要照画）。
+
+    `bands` 是**按段实测的厚度**（:class:`PlanWallBand`）：厚度沿长度变的墙靠它才画得对。
+    旧三样（position/thickness）原样保留——形态只增不改，没认识 `bands` 的老消费方照旧能画，
+    只是画不出厚度变化。量不出的段（整段都压在墙线路口上）`bands` 为空，如实缺、不给凑的数。
     """
 
     axis: PlanAxis
@@ -167,6 +194,7 @@ class PlanWall(_FloorplanModel):
     start_ratio: float
     end_ratio: float
     thickness_ratio: float
+    bands: list[PlanWallBand] = Field(default_factory=list)
 
 
 class PlanOpening(_FloorplanModel):

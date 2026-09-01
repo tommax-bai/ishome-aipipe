@@ -54,6 +54,7 @@ from genpipe_worker.models import (
     PlanAxis,
     PlanOpening,
     PlanWall,
+    PlanWallBand,
     RoomOutline,
     RoomRegion,
 )
@@ -843,6 +844,146 @@ def _grow_rooms(
 # ---------------------------------------------------------------------------
 
 
+_BAND_FACE_STEP_PX = 3
+"""面走位多少像素才算厚度/位置真的变了。样本实测：同段内的墨宽抖动 ≤2px（矢量渲染的
+11↔12、6↔7 交替），真实的段间突变 ≥5px（12→22、12→6、6→11）——取 3 落在分离带上。"""
+
+_BAND_MIN_RUN_PX = 4
+"""突变要持续多少像素才开新段。路口行剔除后残余的孤点毛刺 ≤2px（run 首尾的单行 13/14），
+最短的真实段 8px（小孩房下墙 12px 那截）——取 4，两头各留一倍。"""
+
+
+def _ink_faces_px(grid: _Grid, axis: PlanAxis, position: int, along: int) -> tuple[int, int] | None:
+    """墙线上某一点的**实测墨带两面**：在 position 附近找同向墨带，向两侧扩到墨的边缘。
+
+    问的是同向墙图不是原掩膜（理由同 :func:`_is_walled_near`：横穿的墙不算这条线的墨）。
+    容差与探针同一把尺——中心线与墙体差一两像素是常态，比半宽还远就不是这条线的墙了。
+    """
+    band = grid.parallel_wall[axis]
+    limit = grid.width_px if axis == "vertical" else grid.height_px
+
+    def is_ink(at: int) -> bool:
+        if not 0 <= at < limit:
+            return False
+        return band[along][at] if axis == "vertical" else band[at][along]
+
+    seed = next(
+        (
+            position + offset
+            for offset in sorted(
+                range(-EDGE_PROBE_HALF_WIDTH_PX, EDGE_PROBE_HALF_WIDTH_PX + 1), key=abs
+            )
+            if is_ink(position + offset)
+        ),
+        None,
+    )
+    if seed is None:
+        return None
+    low = seed
+    while is_ink(low - 1):
+        low -= 1
+    high = seed
+    while is_ink(high + 1):
+        high += 1
+    return low, high
+
+
+def _junction_alongs(grid: _Grid, axis: PlanAxis, start: int, end: int) -> set[int]:
+    """这段墙上压在**横穿墙线的墙带里**的那些位置：那儿量出来的不是这条墙的厚度。
+
+    短小的横穿墙段会与本墙连成一条不超过墙厚上限的墨带（h855 那截 13px 长的横墙让竖墙
+    在 y 849~861 量出 24px"厚"——真厚 6px），逐点实测躲不开它，只能按结构剔除：
+    横穿线的位置与厚度都是投票投出来的，压在它墙带里的行一律不采样，厚度归两侧邻段。
+    """
+    crossing_axis: PlanAxis = "horizontal" if axis == "vertical" else "vertical"
+    crossing_lines = grid.horizontal_lines_px if axis == "vertical" else grid.vertical_lines_px
+    found: set[int] = set()
+    for line in crossing_lines:
+        half = grid.line_thickness_px.get((crossing_axis, line), 0) / 2
+        first = max(start, int(line - half))
+        last = min(end, int(line + half) + 1)
+        found.update(range(first, last + 1))
+    return found
+
+
+def _face_step_px(group: list[tuple[int, int, int]], sample: tuple[int, int, int]) -> int:
+    """一个采样点相对当前段的面走位：两面各与段内中位数比，取大的那个。
+
+    比面不比宽是刻意的：宽度不变、整条带子横着挪的"错位"也得换段——那正是两轮定罪里
+    "中心错开 7~8px"的形态。中位数抗孤点毛刺，被吸收进段里的单行噪声带不偏它。
+    """
+    lows = sorted(low for _, low, _ in group)
+    highs = sorted(high for _, _, high in group)
+    _, low, high = sample
+    return max(abs(low - lows[len(lows) // 2]), abs(high - highs[len(highs) // 2]))
+
+
+def _measure_wall_bands(
+    grid: _Grid, axis: PlanAxis, position: int, start: int, end: int
+) -> list[PlanWallBand]:
+    """一段墙的**按段实测厚度**：逐点量墨带两面，面走位持续超阈值就换段。
+
+    这是"一条线只给一个厚度"的补法（2026-09-01 两轮线稿定罪的共同根因）：投票的厚度取
+    整条线的中位数，厚度沿长度变的墙（次卧右外墙的 22px 墙角、玄关交界收成 6px 的那截）
+    被套成一个数。这里按实测分段，段内取中位、段界取两个采样点的中点——相邻段共用边界，
+    拼起来正好盖满整段墙。
+
+    面对齐不用推断：两面各自实测，突变处哪面数值没变哪面就是没动的。全段都压在路口上
+    （量不出）就不给段——如实缺，不给凑的数。
+    """
+    junction = _junction_alongs(grid, axis, start, end)
+    samples: list[tuple[int, int, int]] = []
+    for along in range(start, end + 1):
+        if along in junction:
+            continue
+        faces = _ink_faces_px(grid, axis, position, along)
+        if faces is not None:
+            samples.append((along, faces[0], faces[1]))
+    if not samples:
+        return []
+
+    groups: list[list[tuple[int, int, int]]] = [[samples[0]]]
+    index = 1
+    while index < len(samples):
+        sample = samples[index]
+        if _face_step_px(groups[-1], sample) < _BAND_FACE_STEP_PX:
+            groups[-1].append(sample)
+            index += 1
+            continue
+        upcoming = samples[index : index + _BAND_MIN_RUN_PX]
+        if len(upcoming) == _BAND_MIN_RUN_PX and all(
+            _face_step_px(groups[-1], one) >= _BAND_FACE_STEP_PX for one in upcoming
+        ):
+            groups.append([sample])
+        else:
+            groups[-1].append(sample)  # 不持续的孤点毛刺吸收进当前段，中位数不受它带偏
+        index += 1
+
+    across = float(grid.width_px if axis == "vertical" else grid.height_px)
+    along_px = float(grid.height_px if axis == "vertical" else grid.width_px)
+    bands: list[PlanWallBand] = []
+    for at, group in enumerate(groups):
+        lows = sorted(low for _, low, _ in group)
+        highs = sorted(high for _, _, high in group)
+        low = lows[len(lows) // 2]
+        high = highs[len(highs) // 2]
+        band_start = float(start) if at == 0 else (groups[at - 1][-1][0] + group[0][0]) / 2
+        band_end = (
+            float(end) if at == len(groups) - 1 else (group[-1][0] + groups[at + 1][0][0]) / 2
+        )
+        bands.append(
+            PlanWallBand(
+                start_ratio=band_start / along_px,
+                end_ratio=band_end / along_px,
+                # 墨带占的是 [low, high] 这些整像素，两面在像素格的外缘（±0.5）——
+                # 这样厚度恰等于实测墨宽，与 thickness_ratio 的口径（像素数/图宽高）一致
+                face_low_ratio=(low - 0.5) / across,
+                face_high_ratio=(high + 0.5) / across,
+            )
+        )
+    return bands
+
+
 def _walls_and_openings(
     grid: _Grid, room_at: list[list[int]], room_names: Sequence[str]
 ) -> tuple[list[PlanWall], list[PlanOpening]]:
@@ -882,7 +1023,15 @@ def _walls_and_openings(
                     while at <= last and at in present:
                         at += 1
                     walls.append(
-                        _to_wall(grid, axis_name, position, run_start, at - 1, thickness_px)
+                        _to_wall(
+                            grid,
+                            axis_name,
+                            position,
+                            run_start,
+                            at - 1,
+                            thickness_px,
+                            _measure_wall_bands(grid, axis_name, position, run_start, at - 1),
+                        )
                     )
                 else:
                     gap_start = at
@@ -904,7 +1053,13 @@ def _walls_and_openings(
 
 
 def _to_wall(
-    grid: _Grid, axis: PlanAxis, position: int, start: int, end: int, thickness_px: int
+    grid: _Grid,
+    axis: PlanAxis,
+    position: int,
+    start: int,
+    end: int,
+    thickness_px: int,
+    bands: list[PlanWallBand],
 ) -> PlanWall:
     across = float(grid.width_px if axis == "vertical" else grid.height_px)
     along = float(grid.height_px if axis == "vertical" else grid.width_px)
@@ -914,6 +1069,7 @@ def _to_wall(
         start_ratio=start / along,
         end_ratio=end / along,
         thickness_ratio=thickness_px / across,
+        bands=bands,
     )
 
 

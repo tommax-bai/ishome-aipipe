@@ -208,5 +208,108 @@ def test_geometry_carries_no_absolute_size() -> None:
         *(wall.thickness_ratio for wall in geometry.walls),
         *(opening.position_ratio for opening in geometry.openings),
         *(value for room in geometry.rooms for box in room.boxes for value in box),
+        *(
+            value
+            for wall in geometry.walls
+            for band in wall.bands
+            for value in (
+                band.start_ratio,
+                band.end_ratio,
+                band.face_low_ratio,
+                band.face_high_ratio,
+            )
+        ),
     ]
     assert all(0.0 <= value <= 1.0 for value in values)
+
+
+def _stepped_partition_plan() -> bytes:
+    """隔墙上半 8px、下半 16px，**东面对齐**（303 那一面不动，加厚往西鼓）。
+
+    这正是"一条线只给一个厚度"输的那种墙：两半的投票中心差 4px，会并成一条线、
+    厚度取粗的那一半——按段实测才能把两半各自的厚度与对齐的面量出来。
+    """
+    page = _blank_page()
+    pen = ImageDraw.Draw(page)
+    pen.rectangle(
+        [_PLAN_LEFT_PX, _PLAN_TOP_PX, _PLAN_RIGHT_PX, _PLAN_BOTTOM_PX],
+        outline=(0, 0, 0),
+        width=12,
+    )
+    pen.rectangle([296, _PLAN_TOP_PX, 303, 300], fill=(0, 0, 0))
+    pen.rectangle([288, 300, 303, _PLAN_BOTTOM_PX], fill=(0, 0, 0))
+    buffer = io.BytesIO()
+    page.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_wall_bands_carry_measured_thickness_and_the_still_face() -> None:
+    """按段厚度：厚度沿长度变的墙，段各自带实测厚度，**对齐的那一面数值不动**。
+
+    次卧右外墙（角上一截 22px、其余 12px）与玄关交界（12px 收成 6px）都是这个形态——
+    2026-09-01 两轮线稿定罪的共同根因就是这里此前只有一个数。
+    """
+    geometry = extract_geometry(_stepped_partition_plan(), _regions())
+
+    partition = [
+        wall
+        for wall in geometry.walls
+        if wall.axis == "vertical" and 0.45 < wall.position_ratio < 0.55
+    ]
+    assert len(partition) == 1
+    wall = partition[0]
+    assert len(wall.bands) == 2, "上下两种墨宽，该分两段"
+    upper, lower = wall.bands
+    width = _IMAGE_SIZE_PX[0]
+    assert (upper.face_high_ratio - upper.face_low_ratio) * width == pytest.approx(8, abs=1)
+    assert (lower.face_high_ratio - lower.face_low_ratio) * width == pytest.approx(16, abs=1)
+    # 面对齐写在数值里：东面（高位面）不动，加厚的量全在西面
+    assert upper.face_high_ratio == lower.face_high_ratio
+    assert (lower.face_low_ratio - upper.face_low_ratio) * width == pytest.approx(-8, abs=1)
+    # 段拼起来正好盖满整段墙：首尾与墙同起讫，相邻段共用边界
+    assert upper.start_ratio == wall.start_ratio
+    assert upper.end_ratio == lower.start_ratio
+    assert lower.end_ratio == wall.end_ratio
+
+
+_JUNCTION_IMAGE_SIZE_PX = (900, 900)
+
+
+def _partition_with_stub_plan() -> bytes:
+    """匀厚 8px 隔墙 + 一截 26px 长的横墙抵在它腰上（T 字路口）。
+
+    路口那几行的横向墨带是"横墙长度 + 隔墙厚度"连成的一条（34px，仍在墙厚上限内）——
+    真样本里 h855 那截 13px 长的横墙就这样让竖墙"量出" 24px 厚。按段实测必须躲开路口行，
+    否则修一个假厚度的同时会造出另一个。
+    """
+    page = Image.new("RGB", _JUNCTION_IMAGE_SIZE_PX, (255, 255, 255))
+    pen = ImageDraw.Draw(page)
+    pen.rectangle([80, 80, 820, 820], outline=(0, 0, 0), width=12)
+    pen.rectangle([296, 80, 303, 820], fill=(0, 0, 0))
+    pen.rectangle([270, 294, 295, 306], fill=(0, 0, 0))
+    buffer = io.BytesIO()
+    page.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_junction_rows_do_not_fake_a_thick_band() -> None:
+    """路口行不采样：横墙抵上来的那几行量出的是"横墙长 + 隔墙厚"，不是隔墙的厚度。"""
+    regions = [
+        RoomRegion(name="西屋", box=(0.12, 0.12, 0.30, 0.88)),
+        RoomRegion(name="东屋", box=(0.36, 0.12, 0.88, 0.88)),
+    ]
+    geometry = extract_geometry(_partition_with_stub_plan(), regions)
+
+    partition = [
+        wall
+        for wall in geometry.walls
+        if wall.axis == "vertical" and 0.30 < wall.position_ratio < 0.36
+    ]
+    assert len(partition) == 1
+    wall = partition[0]
+    assert len(wall.bands) == 1, "隔墙从头到尾一个厚度，路口不该把它切出一段假的"
+    band = wall.bands[0]
+    width = _JUNCTION_IMAGE_SIZE_PX[0]
+    assert (band.face_high_ratio - band.face_low_ratio) * width == pytest.approx(8, abs=1)
+    assert band.start_ratio == wall.start_ratio
+    assert band.end_ratio == wall.end_ratio
