@@ -653,6 +653,23 @@ def test_survey_parses_compass_and_rooms() -> None:
     assert [room.name for room in survey.rooms] == ["阳台", "厨房"]
 
 
+def test_survey_thousandth_grid_boxes_are_normalized() -> None:
+    """qwen3-vl-plus 真跑回的是 0~1000 网格（2026-09-04）：按它自家惯例换算，不当成失败。"""
+    survey = parse_survey_output(
+        '{"northPointsTo": null, "rooms": [{"name": "主卧", "box": [96, 572, 350, 856]},'
+        ' {"name": "客厅", "box": [380, 300, 700, 900]}]}'
+    )
+    assert survey.rooms[0].box == (0.096, 0.572, 0.35, 0.856)
+    assert survey.rooms[1].box == (0.38, 0.3, 0.7, 0.9)
+
+
+def test_survey_normalized_boxes_are_left_alone() -> None:
+    survey = parse_survey_output(
+        '{"northPointsTo": "top", "rooms": [{"name": "主卧", "box": [0.1, 0.5, 0.35, 0.86]}]}'
+    )
+    assert survey.rooms[0].box == (0.1, 0.5, 0.35, 0.86)
+
+
 def test_survey_without_compass_is_a_fact_not_a_failure() -> None:
     survey = parse_survey_output(
         '{"northPointsTo": null, "rooms": [{"name": "阳台", "box": [0.4, 0.5, 0.6, 0.7]}]}'

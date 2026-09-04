@@ -17,9 +17,14 @@ import re
 
 from pydantic import ValidationError
 
-from genpipe_worker.models import FloorplanSurvey, VisionReader
+from genpipe_worker.models import FloorplanSurvey, RoomRegion, VisionReader
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+_THOUSANDTH_GRID = 1000.0
+"""Qwen-VL 系模型报框的自家惯例：整图按 0~1000 的网格给坐标。提示词要的是 0~1，但真跑
+（2026-09-04，qwen3-vl-plus 读 1240px 的真户型）回了 [96, 572, 350, 856] 这种千分网格——
+按它自家惯例机械换算，不是猜：判据是**所有坐标都落在 0~1000 且至少一个大于 1**。
+两种都不像的（负数、超过 1000）仍响亮失败，由裁剪那一步拦。"""
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
 
 _SURVEY_SYSTEM_PROMPT = """\
@@ -80,7 +85,29 @@ def parse_survey_output(raw: str) -> FloorplanSurvey:
         ) from e
     if not survey.rooms:
         raise FloorplanSurveyError(["勘测没有报出任何房间：这张图读不出房间划分，不往下走"])
-    return survey
+    return normalize_grid_boxes(survey)
+
+
+def normalize_grid_boxes(survey: FloorplanSurvey) -> FloorplanSurvey:
+    """千分网格 → 归一化（纯函数）。已经是 0~1 的原样返回。"""
+    coords = [coordinate for room in survey.rooms for coordinate in room.box]
+    if not coords or not any(c > 1.0 for c in coords):
+        return survey
+    if not all(0.0 <= c <= _THOUSANDTH_GRID for c in coords):
+        return survey
+    rooms = [
+        RoomRegion(
+            name=room.name,
+            box=(
+                room.box[0] / _THOUSANDTH_GRID,
+                room.box[1] / _THOUSANDTH_GRID,
+                room.box[2] / _THOUSANDTH_GRID,
+                room.box[3] / _THOUSANDTH_GRID,
+            ),
+        )
+        for room in survey.rooms
+    ]
+    return FloorplanSurvey(north_points_to=survey.north_points_to, rooms=rooms)
 
 
 async def survey_floorplan(
