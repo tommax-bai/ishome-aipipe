@@ -194,6 +194,13 @@ class FloorplanVisualTemplates(BaseModel):
 
     mood: str = "cream-journal"
     style: str = "lifestyle-notebook-handwritten"
+    annotate_style: bool = False
+    """风格图上写不写注释。**默认关**：imagegen 的数据自洽门禁要求"注释提到的实体必须在该房间的
+    物件清单里"，而物件清单今天没有生成步（9-01 那批是人手写的派发数据）——只递注释不递清单，
+    当场被拒（2026-09-04 真派发第四跑：客厅/主卧/餐厅三条注释提到灯与床，
+    被 atmosphere-failed 拦下）。
+    裁决"图上要有注释"（2026-09-01）不变；**打开的时点写死＝物件清单生成步（按事实与家庭假设推，
+    机检同批注）落地那一次**，届时注释与清单同批递。"""
 
 
 class FloorplanVisualsSpec(BaseModel):
@@ -208,6 +215,13 @@ class FloorplanVisualsSpec(BaseModel):
     result_callback_url: str
     """结果回流地址：由派发方注入，编排侧不知道业务侧在哪（规范 §1.0 向上通信只走回调）。"""
     templates: FloorplanVisualTemplates = Field(default_factory=FloorplanVisualTemplates)
+    max_caption_retries: int = 2
+    """情绪图叠字放不下时，**重生成底图再叠**的次数上限（编排侧旋钮，生产调用方不传）。
+
+    叠字那一步的失败形态本来就是"重生成一张，不把字压在画面上"（render2d `style_caption`）：模板向
+    模型要了留白，它给多少是它的事——2026-09-04 真派发第五跑顶部只给 138px（需 235px）。重生成赌的是
+    同一次生成的随机性，每次一张图的钱（0.60 元）；耗尽仍放不下即整任务失败，不硬叠。这与挑图门禁
+    "生成→量分→不过线重出"是同一形态的第一处落地。"""
     queues: TaskQueues = Field(default_factory=TaskQueues)
 
 

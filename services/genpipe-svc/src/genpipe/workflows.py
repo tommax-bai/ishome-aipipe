@@ -707,6 +707,18 @@ def summarize_violations(result: dict[str, Any]) -> str:
     return "; ".join(f"{v.get('check', '?')}={v.get('detail', '')}" for v in violations)
 
 
+CAPTION_LAYOUT_CHECK = "style-caption-failed"
+"""render2d 叠字那一步"版面放不下"的失败码（该仓 activities 的 violations.check）。
+只有这一种失败值得重生成底图；桶取不到、入参不对等其余失败重生成也不会变好。"""
+
+
+def is_caption_layout_failure(err: StepFailure) -> bool:
+    """叠字失败是不是"版面放不下"（纯函数）。"""
+    return (
+        err.activity_name == ACTIVITY_STYLE_CAPTION_OVERLAY and CAPTION_LAYOUT_CHECK in err.detail
+    )
+
+
 def annotations_from_notes(notes: Sequence[dict[str, Any]]) -> list[dict[str, str]]:
     """批注 → 写上风格图的注释（纯函数）：只留**不含数字**的句子（imagegen 拒收带数字的注释——
     数字上图走叠印那条线，不让模型画数字），只带 room 与 text（cites 是说明图那边的事）。"""
@@ -879,7 +891,16 @@ class FloorplanVisualsWorkflow:
             )
         )
 
-        annotations = annotations_from_notes(notes)
+        # 注释只在物件清单也能给的时候递（见 FloorplanVisualTemplates.annotate_style）；
+        # 不递就一个字段都不带——imagegen 那边"默认空＝不写注释"，旧派发行为逐字节同前
+        annotations = annotations_from_notes(notes) if spec.templates.annotate_style else []
+        style_request: dict[str, Any] = {
+            "master_object_key": master_key,
+            "room_anchors_object_key": room_anchors_key,
+            "template_id": spec.templates.style,
+        }
+        if annotations:
+            style_request["annotations"] = annotations
         mood_result, style_result = await _gather_steps(
             _run_step(
                 ACTIVITY_ATMOSPHERE_VISUAL,
@@ -893,12 +914,7 @@ class FloorplanVisualsWorkflow:
             ),
             _run_step(
                 ACTIVITY_ATMOSPHERE_VISUAL,
-                {
-                    "master_object_key": master_key,
-                    "room_anchors_object_key": room_anchors_key,
-                    "template_id": spec.templates.style,
-                    "annotations": annotations,
-                },
+                style_request,
                 task_queue=queues.imagegen,
                 start_to_close=_IMAGEGEN_TIMEOUT,
             ),
@@ -917,13 +933,35 @@ class FloorplanVisualsWorkflow:
             )
         )
 
+        # 叠字放不下＝重生成一张底图再叠（不把字压在画面上），上限 max_caption_retries
         mood_key = _require_str(mood_result, "image_object_key", ACTIVITY_ATMOSPHERE_VISUAL)
-        captioned = await _run_step(
-            ACTIVITY_STYLE_CAPTION_OVERLAY,
-            {"style_object_key": mood_key, "copy": copy},
-            task_queue=queues.render2d,
-            start_to_close=_RENDER_TIMEOUT,
-        )
+        caption_attempts = 0
+        while True:
+            try:
+                captioned = await _run_step(
+                    ACTIVITY_STYLE_CAPTION_OVERLAY,
+                    {"style_object_key": mood_key, "copy": copy},
+                    task_queue=queues.render2d,
+                    start_to_close=_RENDER_TIMEOUT,
+                )
+                break
+            except StepFailure as err:
+                if not is_caption_layout_failure(err) or caption_attempts >= max(
+                    spec.max_caption_retries, 0
+                ):
+                    raise
+                caption_attempts += 1
+                mood_result = await _run_step(
+                    ACTIVITY_ATMOSPHERE_VISUAL,
+                    {
+                        "master_object_key": master_key,
+                        "room_anchors_object_key": room_anchors_key,
+                        "template_id": spec.templates.mood,
+                    },
+                    task_queue=queues.imagegen,
+                    start_to_close=_IMAGEGEN_TIMEOUT,
+                )
+                mood_key = _require_str(mood_result, "image_object_key", ACTIVITY_ATMOSPHERE_VISUAL)
         products.append(
             TaskProduct(
                 product="mood_image",
@@ -931,7 +969,11 @@ class FloorplanVisualsWorkflow:
                     captioned, "image_object_key", ACTIVITY_STYLE_CAPTION_OVERLAY
                 ),
                 content_type="image/png",
-                gen_params={"template_id": spec.templates.mood, "base_object_key": mood_key},
+                gen_params={
+                    "template_id": spec.templates.mood,
+                    "base_object_key": mood_key,
+                    "caption_regenerations": caption_attempts,
+                },
             )
         )
 

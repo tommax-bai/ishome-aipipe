@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from genpipe.models import (
     FloorplanVisualsSpec,
+    FloorplanVisualTemplates,
     GenBatchSpec,
     GenerationTaskSpec,
     ReportComposeSpec,
@@ -584,12 +585,18 @@ def _visuals_behaviors(log: CallLog) -> dict[str, MockImpl]:
 
 
 async def _run_visuals(
-    client: Client, behaviors: dict[str, MockImpl], log: CallLog, queue: str
+    client: Client,
+    behaviors: dict[str, MockImpl],
+    log: CallLog,
+    queue: str,
+    *,
+    annotate_style: bool = False,
 ) -> Any:
     spec = FloorplanVisualsSpec(
         task_id=uuid.uuid4().hex,
         floorplan_object_key=_VISUALS_KEY,
         result_callback_url="http://127.0.0.1:1/api/v1/generation-tasks/x/result",
+        templates=FloorplanVisualTemplates(annotate_style=annotate_style),
         queues=TaskQueues(genpipe=queue, render2d=queue, imagegen=queue, render3d=queue),
     )
     worker = Worker(
@@ -625,17 +632,13 @@ async def test_floorplan_visuals_happy_path_yields_six_products_and_delivers() -
     assert by_product["style_image"].object_key.endswith(
         "atmosphere-lifestyle-notebook-handwritten.jpg"
     )
-    # 两张风格图：情绪图底图不带注释；手账写字版只带不含数字的那条
+    # 两张风格图：默认（annotate_style=False）两张都不带注释字段——物件清单生成步落地前不递注释
     atmosphere_calls = [arg for name, arg in log if name == "atmosphere-visual"]
     assert {c["template_id"] for c in atmosphere_calls} == {
         "cream-journal",
         "lifestyle-notebook-handwritten",
     }
-    style_call = next(c for c in atmosphere_calls if c["template_id"].endswith("handwritten"))
-    assert style_call["annotations"] == [{"room": "主卧", "text": "早上先亮起来的是这间"}]
-    assert "annotations" not in next(
-        c for c in atmosphere_calls if c["template_id"] == "cream-journal"
-    )
+    assert all("annotations" not in c for c in atmosphere_calls)
     # 母版吃内联几何 + 全部批注（含带数字的那条——说明图画得了数字）
     render_call = next(arg for name, arg in log if name == "plan-2d-render")
     assert render_call["floorplan_object_key"] == _VISUALS_KEY and len(render_call["notes"]) == 2
@@ -690,3 +693,68 @@ async def test_floorplan_visuals_main_chain_failure_still_delivers_failed_result
     deliver_call = next(arg for name, arg in log if name == "task-result-deliver")
     assert deliver_call["result"]["status"] == "failed"
     assert deliver_call["result"]["failure"]["code"] == "plan-2d-render"
+
+
+async def test_floorplan_visuals_annotates_style_only_when_switched_on() -> None:
+    """annotate_style=True：手账写字版只带不含数字的那条注释；情绪图底图仍不带。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+    queue = f"it-{uuid.uuid4().hex}"
+    result = await _run_visuals(client, _visuals_behaviors(log), log, queue, annotate_style=True)
+
+    assert result.verdict == "ok"
+    atmosphere_calls = [arg for name, arg in log if name == "atmosphere-visual"]
+    style_call = next(c for c in atmosphere_calls if c["template_id"].endswith("handwritten"))
+    assert style_call["annotations"] == [{"room": "主卧", "text": "早上先亮起来的是这间"}]
+    assert "annotations" not in next(
+        c for c in atmosphere_calls if c["template_id"] == "cream-journal"
+    )
+
+
+async def test_floorplan_visuals_regenerates_mood_when_caption_does_not_fit() -> None:
+    """叠字放不下 → 重生成一张情绪图底图再叠；第二张放下了即成功，产物记着重生成了一次。"""
+    client = await _client_or_skip()
+    log: CallLog = []
+    caption_calls = {"n": 0}
+
+    def flaky_caption(arg: Any) -> dict[str, Any]:
+        caption_calls["n"] += 1
+        if caption_calls["n"] == 1:
+            return {
+                "verdict": "failed",
+                "violations": [
+                    {
+                        "check": "style-caption-failed",
+                        "detail": "版面上没有一段连续空白放得下这些字",
+                    }
+                ],
+            }
+        return {"verdict": "ok", "image_object_key": arg["style_object_key"] + "-captioned.png"}
+
+    behaviors = _visuals_behaviors(log) | {"style-caption-overlay": flaky_caption}
+    queue = f"it-{uuid.uuid4().hex}"
+    result = await _run_visuals(client, behaviors, log, queue)
+
+    assert result.verdict == "ok", result
+    mood = next(p for p in result.products if p.product == "mood_image")
+    assert mood.gen_params["caption_regenerations"] == 1
+    assert [name for name, _ in log].count("atmosphere-visual") == 3
+    assert caption_calls["n"] == 2
+
+
+async def test_floorplan_visuals_gives_up_captioning_after_retries() -> None:
+    client = await _client_or_skip()
+    log: CallLog = []
+    behaviors = _visuals_behaviors(log) | {
+        "style-caption-overlay": lambda _: {
+            "verdict": "failed",
+            "violations": [{"check": "style-caption-failed", "detail": "放不下"}],
+        }
+    }
+    queue = f"it-{uuid.uuid4().hex}"
+    result = await _run_visuals(client, behaviors, log, queue)
+
+    assert result.verdict == "failed"
+    assert result.failure is not None and result.failure["code"] == "style-caption-overlay"
+    # 默认两次重生成：情绪图底图共出了 1 + 2 张，风格图 1 张
+    assert [name for name, _ in log].count("atmosphere-visual") == 4
