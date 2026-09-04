@@ -88,3 +88,42 @@ async def test_empty_fact_list_never_reaches_the_model() -> None:
     with pytest.raises(PlanCopyError, match="就是编"):
         await write_copy([], llm)
     assert llm.prompts == []
+
+
+class _SequencedLlm:
+    """按顺序回不同稿子的假模型：第一稿被打回、第二稿改好。"""
+
+    def __init__(self, payloads: list[object]) -> None:
+        self.payloads = list(payloads)
+        self.prompts: list[str] = []
+
+    async def complete_text(
+        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+    ) -> str:
+        self.prompts.append(user_prompt)
+        return json.dumps(self.payloads.pop(0), ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_rejected_draft_is_rewritten_with_reasons_then_accepted() -> None:
+    """打回带上一稿与原因重写（裁决 8-30）：第二稿过检即返回，重写提示里看得见原因。"""
+    too_long = _copy(tips=["阳台和飘窗虽小，但细长形状适合种绿植或摆小桌椅", *_TIPS[1:]])
+    llm = _SequencedLlm([too_long.model_dump(), _copy().model_dump()])
+
+    copy = await write_copy(_FACTS, llm)
+
+    assert copy.tips == _TIPS
+    assert len(llm.prompts) == 2
+    assert "上一稿被打回的原因" in llm.prompts[1]
+    assert "贴士一超过 22 字" in llm.prompts[1]
+    assert "阳台和飘窗虽小" in llm.prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_rewrites_exhausted_fails_loud_with_last_reasons() -> None:
+    too_long = _copy(tips=["阳台和飘窗虽小，但细长形状适合种绿植或摆小桌椅", *_TIPS[1:]])
+    llm = _SequencedLlm([too_long.model_dump()] * 3)
+
+    with pytest.raises(PlanCopyError, match="贴士一超过 22 字"):
+        await write_copy(_FACTS, llm, max_rewrites=2)
+    assert len(llm.prompts) == 3

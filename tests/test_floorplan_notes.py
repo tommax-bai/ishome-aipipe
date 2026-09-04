@@ -113,3 +113,36 @@ async def test_empty_fact_list_never_reaches_the_model() -> None:
     with pytest.raises(PlanNotesError, match="事实清单是空的"):
         await write_notes([], _ROOMS, llm)
     assert llm.prompts == []
+
+
+class _SequencedLlm:
+    def __init__(self, payloads: list[object]) -> None:
+        self.payloads = list(payloads)
+        self.prompts: list[str] = []
+
+    async def complete_text(
+        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+    ) -> str:
+        self.prompts.append(user_prompt)
+        return json.dumps(self.payloads.pop(0), ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_too_few_notes_are_rewritten_with_reasons_then_accepted() -> None:
+    """留下的不够 → 带上一稿与打回原因重写（裁决 8-30）；第二稿够了即返回。"""
+    thin = {"notes": [{"room": "主卧", "text": "主卧很亮", "cites": []}]}
+    good = {
+        "notes": [
+            {"room": "主卧", "text": "早上先亮起来的是这间", "cites": ["plan-daylight-主卧"]},
+            {"room": "阳台", "text": "阳台又长又窄", "cites": ["plan-shape-阳台"]},
+            {"room": "玄关", "text": "玄关不大够放鞋柜", "cites": ["plan-share-玄关"]},
+        ]
+    }
+    llm = _SequencedLlm([thin, good])
+
+    kept, rejected = await write_notes(_FACTS, _ROOMS, llm)
+
+    assert len(kept) == 3 and rejected == []
+    assert len(llm.prompts) == 2
+    assert "上一稿被打回的原因" in llm.prompts[1]
+    assert "一条依据都没引" in llm.prompts[1]

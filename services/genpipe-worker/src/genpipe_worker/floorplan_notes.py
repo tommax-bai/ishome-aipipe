@@ -34,6 +34,10 @@ MIN_NOTES = 3
 MAX_NOTE_CHARS = 24
 """一条批注最多多少字：它要能挂在房间旁边而不盖住图。"""
 
+MAX_NOTES_REWRITES = 2
+"""过检留下的不够时，带着上一稿与打回原因重写的轮数上限（裁决 2026-08-30：重写要看得见上一稿；
+打回一律带原文与原因，射程＝所有裁判场）。与文案那一步各持一份常量，两步同层互不可见是刻意的。"""
+
 _SYSTEM_PROMPT = """\
 你在给一张户型图写房间批注，读者是刚拿到自己家户型图的业主。
 只输出一个 JSON 对象：{"notes": [{"room": "...", "text": "...", "cites": ["..."]}]}
@@ -70,6 +74,21 @@ def build_user_prompt(facts: Sequence[PlanFact], room_names: Sequence[str]) -> s
     """事实清单 + 房间清单 → 递给模型的那段话。纯函数，顺序固定。"""
     listed = "\n".join(f"- {fact.fact_id}：{fact.statement}" for fact in facts)
     return f"房间清单：{'、'.join(room_names)}\n\n事实清单（只能引用这里的 id）：\n{listed}"
+
+
+def build_rewrite_prompt(
+    facts: Sequence[PlanFact],
+    room_names: Sequence[str],
+    previous_raw: str,
+    problems: Sequence[str],
+) -> str:
+    """重写提示（纯函数）：素材 + 上一稿原文 + 打回原因逐条——改掉被打回的，其余保持。"""
+    reasons = "\n".join(f"- {problem}" for problem in problems)
+    previous = previous_raw.strip()[:800]
+    return (
+        f"{build_user_prompt(facts, room_names)}\n\n上一稿（原样）：\n{previous}\n\n"
+        f"上一稿被打回的原因（逐条改掉，其余保持，仍按系统提示的形态只输出 JSON）：\n{reasons}"
+    )
 
 
 def _parse(raw: str) -> list[PlanNote]:
@@ -127,12 +146,24 @@ async def write_notes(
     room_names: Sequence[str],
     client: TextCompletion,
     model: str = NOTES_MODEL,
+    *,
+    max_rewrites: int = MAX_NOTES_REWRITES,
 ) -> tuple[list[PlanNote], list[str]]:
-    """产一批批注并过机检。返回（留下的, 打回原因）。留下的不够即响亮失败。"""
+    """产一批批注并过机检。返回（留下的, 打回原因）。留下的不够就带上一稿与原因重写，
+    轮数耗尽仍不够即响亮失败。"""
     if not facts:
         raise PlanNotesError(["事实清单是空的：没有可引的东西，句子必然是编的"])
-    raw = await client.complete_text(model, _SYSTEM_PROMPT, build_user_prompt(facts, room_names))
-    kept, rejected = check_notes(_parse(raw), facts, room_names)
-    if len(kept) < MIN_NOTES:
-        raise PlanNotesError([f"过检的批注只有 {len(kept)} 条，不足 {MIN_NOTES} 条", *rejected])
-    return kept, rejected
+    user_prompt = build_user_prompt(facts, room_names)
+    problems: list[str] = []
+    for _attempt in range(max(max_rewrites, 0) + 1):
+        raw = await client.complete_text(model, _SYSTEM_PROMPT, user_prompt)
+        try:
+            kept, rejected = check_notes(_parse(raw), facts, room_names)
+        except PlanNotesError as e:
+            problems = list(e.details)
+        else:
+            if len(kept) >= MIN_NOTES:
+                return kept, rejected
+            problems = [f"过检的批注只有 {len(kept)} 条，不足 {MIN_NOTES} 条", *rejected]
+        user_prompt = build_rewrite_prompt(facts, room_names, raw, problems)
+    raise PlanNotesError(problems)

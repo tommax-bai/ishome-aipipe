@@ -29,6 +29,11 @@ MAX_TITLE_CHARS = 12
 MAX_SUMMARY_CHARS = 40
 MAX_TIP_CHARS = 22
 
+MAX_COPY_REWRITES = 2
+"""过检不合格后带着上一稿与原因重写的轮数上限（裁决 2026-08-30：重写要看得见上一稿；打回一律带原文
+与原因，射程＝所有裁判场）。2026-09-04 真派发第七跑：一条贴士 24 字超 22 字上限，单次即整任务失败——
+措辞长短是随机的，不是必然的，给它一次改的机会比整条线重来便宜。"""
+
 _DIGITS = re.compile(r"\d+(?:\.\d+)?")
 _BANNED_PATTERNS = (
     ("误差", "自造精度声明"),
@@ -78,6 +83,17 @@ def build_user_prompt(facts: Sequence[PlanFact]) -> str:
     return f"这套户型的事实（写文案的素材，可用可不用）：\n{listed}"
 
 
+def build_rewrite_prompt(
+    facts: Sequence[PlanFact], previous_raw: str, problems: Sequence[str]
+) -> str:
+    """重写提示（纯函数）：素材 + 上一稿原文 + 打回原因逐条——改掉被打回的，其余保持。"""
+    reasons = "\n".join(f"- {problem}" for problem in problems)
+    return (
+        f"{build_user_prompt(facts)}\n\n上一稿（原样）：\n{previous_raw.strip()[:800]}\n\n"
+        f"上一稿被打回的原因（逐条改掉，其余保持，仍按系统提示的形态只输出 JSON）：\n{reasons}"
+    )
+
+
 def _known_numbers(facts: Sequence[PlanFact]) -> set[str]:
     return {found for fact in facts for found in _DIGITS.findall(fact.statement)}
 
@@ -105,20 +121,30 @@ def check_copy(copy: PlanCopy, facts: Sequence[PlanFact]) -> list[str]:
 
 
 async def write_copy(
-    facts: Sequence[PlanFact], client: TextCompletion, model: str = COPY_MODEL
+    facts: Sequence[PlanFact],
+    client: TextCompletion,
+    model: str = COPY_MODEL,
+    *,
+    max_rewrites: int = MAX_COPY_REWRITES,
 ) -> PlanCopy:
-    """产一份页面文案并过机检。不合格即响亮失败——版面上空着一块比说错更显眼。"""
+    """产一份页面文案并过机检；不合格带上一稿与原因重写，轮数耗尽仍不合格即响亮失败——
+    版面上空着一块比说错更显眼。"""
     if not facts:
         raise PlanCopyError(["事实清单是空的：不给素材的'直接推导'就是编"])
-    raw = await client.complete_text(model, _SYSTEM_PROMPT, build_user_prompt(facts))
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1].removesuffix("```").strip()
-    try:
-        copy = PlanCopy.model_validate(json.loads(text))
-    except (json.JSONDecodeError, ValidationError) as e:
-        raise PlanCopyError([f"模型没回出可用的 JSON：{raw[:300]}"]) from e
-    problems = check_copy(copy, facts)
-    if problems:
-        raise PlanCopyError(problems)
-    return copy
+    user_prompt = build_user_prompt(facts)
+    problems: list[str] = []
+    for _attempt in range(max(max_rewrites, 0) + 1):
+        raw = await client.complete_text(model, _SYSTEM_PROMPT, user_prompt)
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].removesuffix("```").strip()
+        try:
+            copy = PlanCopy.model_validate(json.loads(text))
+        except (json.JSONDecodeError, ValidationError):
+            problems = [f"模型没回出可用的 JSON：{raw[:300]}"]
+        else:
+            problems = check_copy(copy, facts)
+            if not problems:
+                return copy
+        user_prompt = build_rewrite_prompt(facts, raw, problems)
+    raise PlanCopyError(problems)
