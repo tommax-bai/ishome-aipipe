@@ -39,6 +39,7 @@ def test_report_dispatch_routes_are_mounted() -> None:
     assert "post" in paths["/api/v1/genpipe/reports"]
     assert "post" in paths["/api/v1/genpipe/batches"]
     assert "post" in paths["/api/v1/genpipe/tasks"]
+    assert "post" in paths["/api/v1/genpipe/floorplan-visuals"]
     assert "get" in paths["/healthz"]
 
 
@@ -101,3 +102,50 @@ def test_duplicate_report_id_answers_409(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert response.status_code == 409
     assert "rpt-dup" in response.json()["detail"]
+
+
+def test_create_floorplan_visuals_passes_spec_through_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """三张图派发入口：task_id / 对象键 / 回调地址一字不改到达 service 层，模板走默认。"""
+    from genpipe.models import FloorplanVisualsSpec
+
+    seen: list[FloorplanVisualsSpec] = []
+
+    async def fake_start(spec: FloorplanVisualsSpec) -> WorkflowStartReceipt:
+        seen.append(spec)
+        return WorkflowStartReceipt(workflow_id=f"floorplan-visuals-{spec.task_id}", run_id="r")
+
+    monkeypatch.setattr("genpipe.router.start_floorplan_visuals", fake_start)
+    body = {
+        "task_id": "01J0TASK",
+        "floorplan_object_key": "uploads/" + "a" * 64 + "/original.png",
+        "result_callback_url": "http://127.0.0.1:8103/api/v1/generation-tasks/01J0TASK/result",
+    }
+    with TestClient(app) as client:
+        response = client.post("/api/v1/genpipe/floorplan-visuals", json=body)
+    assert response.status_code == 202
+    assert response.json()["workflow_id"] == "floorplan-visuals-01J0TASK"
+    assert seen[0].floorplan_object_key == body["floorplan_object_key"]
+    assert seen[0].result_callback_url == body["result_callback_url"]
+    assert seen[0].templates.mood == "cream-journal"
+    assert seen[0].templates.style == "lifestyle-notebook-handwritten"
+
+
+def test_create_floorplan_visuals_conflict_on_duplicate_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from genpipe.models import FloorplanVisualsSpec
+
+    async def already_started(spec: FloorplanVisualsSpec) -> WorkflowStartReceipt:
+        raise WorkflowAlreadyStartedError(f"floorplan-visuals-{spec.task_id}", "FloorplanVisuals")
+
+    monkeypatch.setattr("genpipe.router.start_floorplan_visuals", already_started)
+    body = {
+        "task_id": "01J0DUP",
+        "floorplan_object_key": "uploads/" + "b" * 64 + "/original.jpg",
+        "result_callback_url": "http://127.0.0.1:8103/x",
+    }
+    with TestClient(app) as client:
+        response = client.post("/api/v1/genpipe/floorplan-visuals", json=body)
+    assert response.status_code == 409

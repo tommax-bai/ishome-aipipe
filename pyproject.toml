@@ -71,6 +71,11 @@ files = [
 module = ["grpc", "grpc.*"]
 ignore_missing_imports = true
 
+# oss2 不带 py.typed（阿里云 OSS SDK）；定向忽略，勿扩大范围（同 render2d / imagegen）
+[[tool.mypy.overrides]]
+module = ["oss2", "oss2.*"]
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # pytest
 # ---------------------------------------------------------------------------
@@ -164,11 +169,36 @@ layers = [
   "activities",
   "floorplan_parse",
   "floorplan_survey | floorplan_regions | floorplan_notes | floorplan_copy",
-  "orientation | llm_client | layout_features | floorplan_facts",
+  "orientation | llm_client | layout_features | floorplan_facts | object_store",
   "floorplan_geometry",
   "models",
 ]
 containers = ["genpipe_worker"]
+
+[[tool.importlinter.contracts]]
+name = "genpipe_worker 出站边缘 object_store 不感知上层：只依赖运行库——拿图的那只手不知道图会被拿去算什么"
+type = "forbidden"
+source_modules = ["genpipe_worker.object_store"]
+forbidden_modules = [
+  "genpipe_worker.models",
+  "genpipe_worker.layout_features",
+  "genpipe_worker.orientation",
+  "genpipe_worker.floorplan_geometry",
+  "genpipe_worker.floorplan_facts",
+  "genpipe_worker.floorplan_parse",
+  "genpipe_worker.floorplan_survey",
+  "genpipe_worker.floorplan_regions",
+  "genpipe_worker.floorplan_notes",
+  "genpipe_worker.floorplan_copy",
+  "genpipe_worker.llm_client",
+  "genpipe_worker.activities",
+  "genpipe_worker.worker",
+  "genpipe_worker.floorplan_cli",
+  "genpipe_worker.floorplan_geometry_cli",
+  "httpx",
+  "temporalio",
+  "PIL",
+]
 
 [[tool.importlinter.contracts]]
 name = "genpipe_worker 出站边缘 llm_client 不感知上层：只依赖运行库（模型轴 R7 一轴一层）"

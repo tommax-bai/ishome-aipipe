@@ -25,7 +25,7 @@ chat-grpc = "chat.grpc_server:main"
 chat-migrate = "chat.migrate:main"
 
 [tool.uv.sources]
-ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }
+ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.3.0", subdirectory = "gen/python" }
 patch-engine = { workspace = true }
 
 [build-system]

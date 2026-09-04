@@ -17,6 +17,7 @@ from temporalio.worker import Worker
 
 from genpipe.workflows import (
     WORKFLOW_TASK_QUEUE,
+    FloorplanVisualsWorkflow,
     GenBatchWorkflow,
     GenerationTaskWorkflow,
     ReportComposeWorkflow,
@@ -42,7 +43,12 @@ async def run_worker(address: str | None = None, namespace: str | None = None) -
     worker = Worker(
         client,
         task_queue=WORKFLOW_TASK_QUEUE,
-        workflows=[GenBatchWorkflow, GenerationTaskWorkflow, ReportComposeWorkflow],
+        workflows=[
+            GenBatchWorkflow,
+            GenerationTaskWorkflow,
+            ReportComposeWorkflow,
+            FloorplanVisualsWorkflow,
+        ],
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

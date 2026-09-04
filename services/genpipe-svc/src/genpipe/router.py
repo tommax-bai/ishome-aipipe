@@ -9,6 +9,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from genpipe.models import (
+    FloorplanVisualsSpec,
     GenBatchSpec,
     GenerationTaskSpec,
     ReportComposeSpec,
@@ -16,6 +17,7 @@ from genpipe.models import (
 )
 from genpipe.service import (
     get_batch_status,
+    start_floorplan_visuals,
     start_gen_batch,
     start_generation_task,
     start_report_compose,
@@ -47,6 +49,16 @@ async def create_report(spec: ReportComposeSpec) -> WorkflowStartReceipt:
         return await start_report_compose(spec)
     except WorkflowAlreadyStartedError as err:
         raise HTTPException(status_code=409, detail=f"report 已启动：{spec.report_id}") from err
+
+
+@router.post("/floorplan-visuals", status_code=202)
+async def create_floorplan_visuals(spec: FloorplanVisualsSpec) -> WorkflowStartReceipt:
+    """三张免费图派发入口：project-svc 铸任务后调用，body 即 spec 原样透传
+    （contracts genpipe.v1）。"""
+    try:
+        return await start_floorplan_visuals(spec)
+    except WorkflowAlreadyStartedError as err:
+        raise HTTPException(status_code=409, detail=f"task 已启动：{spec.task_id}") from err
 
 
 @router.get("/batches/{batch_id}")

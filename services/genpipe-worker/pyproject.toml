@@ -9,13 +9,14 @@ dependencies = [
   "pydantic>=2.9",
   "httpx>=0.27",
   "pillow>=11.0",  # 分区读的确定性裁剪与放大（剪刀在代码手里，不在模型手里）
+  "oss2>=2.18",  # 私有桶：读用户上传的户型图、写解析派生物（2026-09-04 接线，同 render2d）
   "adapters",
   "scoring",
 ]
 
 # 纵切入口：`uv run genpipe-worker` 启动 activity worker（监听 genpipe-activities）
 # 工具入口：`uv run floorplan-parse --image 户型图.png` 户型图解析（首版纯库 + CLI，同渲染层先例；
-#           接进 Temporal 的时点写死＝上传入口就绪时，在此之前 floorplan-parse activity 存根不动）
+#           2026-09-04 已接进 Temporal（上传入口就绪）：activity 吃对象键，CLI 吃本地路径，两条路共用纯库）
 [project.scripts]
 genpipe-worker = "genpipe_worker.worker:main"
 floorplan-parse = "genpipe_worker.floorplan_cli:main"
@@ -25,7 +26,7 @@ floorplan-parse = "genpipe_worker.floorplan_cli:main"
 floorplan-geometry = "genpipe_worker.floorplan_geometry_cli:main"
 
 [tool.uv.sources]
-ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.2.0", subdirectory = "gen/python" }
+ishome-contracts = { git = "ssh://git@github.com/tommax-bai/ishome-contracts.git", tag = "v0.3.0", subdirectory = "gen/python" }
 adapters = { workspace = true }
 scoring = { workspace = true }
 

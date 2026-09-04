@@ -17,7 +17,7 @@ activity 一律以 contracts 注册表中的注册名字符串 + task_queue 派�
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Coroutine, Sequence
 from datetime import timedelta
 from typing import Any
 
@@ -29,6 +29,8 @@ with workflow.unsafe.imports_passed_through():
     import pydantic_core  # noqa: F401  # pydantic 转换器运行时依赖：预载省去沙箱逐次告警
 
     from genpipe.models import (
+        FloorplanVisualsResult,
+        FloorplanVisualsSpec,
         GenBatchSpec,
         GenerationTaskResult,
         GenerationTaskSpec,
@@ -36,6 +38,7 @@ with workflow.unsafe.imports_passed_through():
         ReportComposeResult,
         ReportComposeSpec,
         ReportStage,
+        TaskProduct,
         TaskStep,
         UnitFanoutOutcome,
     )
@@ -54,6 +57,12 @@ ACTIVITY_REPORT_UNIT_COMPOSE = "report-unit-compose"
 ACTIVITY_REPORT_PAGE_ASSEMBLE = "report-page-assemble"
 ACTIVITY_REPORT_BOOK_CHECK = "report-book-check"
 ACTIVITY_REPORT_BOOK_RENDER = "report-book-render"
+ACTIVITY_FLOORPLAN_PARSE = "floorplan-parse"
+ACTIVITY_FLOORPLAN_GEOMETRY_EXTRACT = "floorplan-geometry-extract"
+ACTIVITY_PLAN_NOTES_WRITE = "plan-notes-write"
+ACTIVITY_PLAN_COPY_WRITE = "plan-copy-write"
+ACTIVITY_STYLE_CAPTION_OVERLAY = "style-caption-overlay"
+ACTIVITY_TASK_RESULT_DELIVER = "task-result-deliver"
 
 WORKFLOW_TASK_QUEUE = "genpipe-workflows"
 """workflow 专属队列：起点（service.py）与执行者（genpipe workflow worker）同属本服务，
@@ -75,6 +84,16 @@ _ACTIVITY_RETRY = RetryPolicy(
     maximum_attempts=3,
 )
 """activity 级重试上限：耗尽后 ActivityError 上抛，由 workflow 记入 failed verdict。"""
+_IMAGEGEN_TIMEOUT = timedelta(minutes=10)
+"""图生图一张的 start_to_close 上限（实测 18–60 s，含网关排队）。imagegen / render2d 都
+**不打心跳**，故不置 long_running——设了心跳窗口等于按 60 s 误杀正常出图。"""
+_DELIVER_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=2),
+    backoff_coefficient=2.0,
+    maximum_interval=timedelta(minutes=1),
+    maximum_attempts=10,
+)
+"""结果回流的重试：业务侧可能正在重启，多等几轮比丢一次结论便宜——结论丢了业务侧就永远不知道。"""
 
 
 class PipelineDataError(Exception):
@@ -267,11 +286,13 @@ async def _execute(
     task_queue: str,
     long_running: bool = False,
     start_to_close: timedelta | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> dict[str, Any]:
     """按注册名字符串派发 activity；显式 task_queue / 超时 / 重试，长跑加心跳窗口。
 
     `start_to_close` 覆写默认两档超时（长跑绘图 / 计算校验）；不打心跳的长跑 activity
     只覆写超时、不置 long_running，否则心跳窗口会误杀正常执行。
+    `retry_policy` 覆写默认重试（回调那一步要多等几轮）。
     """
     result = await workflow.execute_activity(
         activity_name,
@@ -280,7 +301,7 @@ async def _execute(
         start_to_close_timeout=start_to_close
         or (_RENDER_TIMEOUT if long_running else _COMPUTE_TIMEOUT),
         heartbeat_timeout=_RENDER_HEARTBEAT if long_running else None,
-        retry_policy=_ACTIVITY_RETRY,
+        retry_policy=retry_policy or _ACTIVITY_RETRY,
     )
     if not isinstance(result, dict):
         raise PipelineDataError(f"{activity_name}:non-dict-result")
@@ -662,3 +683,345 @@ class ReportComposeWorkflow:
             return_exceptions=True,
         )
         return partition_unit_outcomes(domains, outcomes)
+
+
+class StepFailure(Exception):
+    """三张图主链某一步没过（activity 抛错、verdict≠ok、缺关键出参）：带上是哪一步、为什么。"""
+
+    def __init__(self, activity_name: str, detail: str) -> None:
+        super().__init__(f"{activity_name}:{detail}")
+        self.activity_name = activity_name
+        self.detail = detail
+
+    @property
+    def check(self) -> str:
+        return f"{self.activity_name}:{self.detail}"
+
+
+def summarize_violations(result: dict[str, Any]) -> str:
+    """把 activity 的 violations 压成一行失败码（纯函数）：`check=detail; check=detail`；
+    没给即 failed-without-violations。"""
+    violations = collect_violations(result)
+    if not violations:
+        return "failed-without-violations"
+    return "; ".join(f"{v.get('check', '?')}={v.get('detail', '')}" for v in violations)
+
+
+def annotations_from_notes(notes: Sequence[dict[str, Any]]) -> list[dict[str, str]]:
+    """批注 → 写上风格图的注释（纯函数）：只留**不含数字**的句子（imagegen 拒收带数字的注释——
+    数字上图走叠印那条线，不让模型画数字），只带 room 与 text（cites 是说明图那边的事）。"""
+    picked: list[dict[str, str]] = []
+    for note in notes:
+        room = note.get("room")
+        text = note.get("text")
+        if not isinstance(room, str) or not isinstance(text, str) or not text.strip():
+            continue
+        if any(ch.isdigit() for ch in text):
+            continue
+        picked.append({"room": room, "text": text})
+    return picked
+
+
+def captioned_key_of(style_object_key: str) -> str:
+    """情绪图叠字后的对象键（纯函数）：
+    `…/atmosphere-{template}.{ext}` → `…/atmosphere-{template}-captioned.png`。
+
+    与 render2d `style-caption-overlay` 写键的规则**逐字同构**（那边是真源，本处只用来在
+    结论里预告键、便于调用方核对）；ext 固定 png——叠字后的图由确定性绘制层重新编码。
+    """
+    stem = style_object_key.rsplit(".", 1)[0]
+    return f"{stem}-captioned.png"
+
+
+def build_task_result(
+    spec: FloorplanVisualsSpec,
+    *,
+    verdict: str,
+    products: Sequence[TaskProduct],
+    failed_checks: Sequence[str],
+    failure: dict[str, Any] | None,
+    workflow_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """回调报文（纯函数）：contracts `openapi/project.v1.yaml` `generation_task_result`。
+
+    只装契约里有的字段——业务侧按契约收货，多一个字段就是两侧口径漂了一格。
+    failed_checks 并进 failure.detail：失败原因要让业务侧一眼看到，不靠回来翻 Temporal 历史。
+    """
+    payload: dict[str, Any] = {
+        "task_id": spec.task_id,
+        "status": "completed" if verdict == "ok" else "failed",
+        "products": [product.model_dump() for product in products],
+        "workflow_id": workflow_id,
+        "run_id": run_id,
+    }
+    if verdict != "ok":
+        code = (failure or {}).get("code") or "floorplan-visuals-failed"
+        detail = (failure or {}).get("detail") or ""
+        extra = [check for check in failed_checks if check and check != f"{code}:{detail}"]
+        if extra:
+            detail = f"{detail}；其余：{' | '.join(extra)}" if detail else " | ".join(extra)
+        payload["failure"] = {"code": code, "detail": detail}
+    return payload
+
+
+@workflow.defn
+class FloorplanVisualsWorkflow:
+    """三张免费图生成线（2026-09-04 接线）：户型图对象键 → 三张图 → 结论回流业务侧。
+
+    主链（任一步失败即整任务失败，已出的半成品只留血缘）：
+        floorplan-geometry-extract（勘测 + 几何 + 事实）
+        → plan-notes-write ∥ plan-copy-write
+        → plan-2d-render（母版 + 功能说明图，render2d）
+        → atmosphere-visual ×2（情绪图底图 ∥ 手账写字版 + 注释，imagegen）
+        → style-caption-overlay（情绪图叠字，render2d）
+    旁路：floorplan-parse（户型特征解析，给报告那条腿用）与主链并行；它失败不影响三张图，
+    只在 failed_checks 里记一条、结论里少一件 floorplan_reading。
+    收尾：task-result-deliver 把结论 `POST` 到派发时注入的回调地址——**没送到不算完**。
+
+    与 GenerationTaskWorkflow 的关系：那条是骨架期的通用路由链，派的字段与 render2d / imagegen
+    两个真 activity 已对不上（那两仓的收货模型早改了形态）；本 workflow 按两仓现行的收货单派，
+    不复用那条链。门禁（consistency / compliance）两个 activity 仍是存根，本线暂不派——
+    时点写死＝那两个 activity 实装时。
+    """
+
+    @workflow.run
+    async def run(self, spec: FloorplanVisualsSpec) -> FloorplanVisualsResult:
+        products: list[TaskProduct] = []
+        failed_checks: list[str] = []
+        failure: dict[str, Any] | None = None
+
+        # 旁路先起：特征解析要 11 次调用、约 40 s，与主链并行不占三张图的时间
+        parse_task = asyncio.create_task(self._parse_floorplan(spec))
+        try:
+            await self._render_visuals(spec, products)
+        except StepFailure as err:
+            failed_checks.append(err.check)
+            failure = {"code": err.activity_name, "detail": err.detail}
+        reading_product, reading_failed = await parse_task
+        if reading_product is not None:
+            products.append(reading_product)
+        failed_checks.extend(reading_failed)
+
+        verdict = "ok" if failure is None else "failed"
+        info = workflow.info()
+        result_payload = build_task_result(
+            spec,
+            verdict=verdict,
+            products=products,
+            failed_checks=failed_checks,
+            failure=failure,
+            workflow_id=info.workflow_id,
+            run_id=info.run_id,
+        )
+        delivered = await self._deliver(spec, result_payload, failed_checks)
+        return FloorplanVisualsResult(
+            task_id=spec.task_id,
+            verdict="ok" if verdict == "ok" else "failed",
+            products=products,
+            failed_checks=failed_checks,
+            failure=failure,
+            delivered=delivered,
+        )
+
+    async def _render_visuals(
+        self, spec: FloorplanVisualsSpec, products: list[TaskProduct]
+    ) -> None:
+        """主链。每一步的产物一出来就登记进 products——失败时业务侧也拿得到已出的半成品血缘。"""
+        queues = spec.queues
+        key = spec.floorplan_object_key
+
+        geometry = await _run_step(
+            ACTIVITY_FLOORPLAN_GEOMETRY_EXTRACT,
+            {"floorplan_object_key": key},
+            task_queue=queues.genpipe,
+        )
+        products.append(
+            TaskProduct(
+                product="floorplan_geometry",
+                object_key=_require_str(
+                    geometry, "geometry_key", ACTIVITY_FLOORPLAN_GEOMETRY_EXTRACT
+                ),
+                content_type="application/json",
+            )
+        )
+        facts = geometry.get("facts") or []
+        room_names = geometry.get("room_names") or []
+
+        notes_result, copy_result = await _gather_steps(
+            _run_step(
+                ACTIVITY_PLAN_NOTES_WRITE,
+                {"facts": facts, "room_names": room_names},
+                task_queue=queues.genpipe,
+            ),
+            _run_step(ACTIVITY_PLAN_COPY_WRITE, {"facts": facts}, task_queue=queues.genpipe),
+        )
+        notes = notes_result.get("notes") or []
+        copy = copy_result.get("copy") or {}
+
+        render = await _run_step(
+            ACTIVITY_PLAN_2D_RENDER,
+            {"floorplan_object_key": key, "geometry": geometry.get("geometry"), "notes": notes},
+            task_queue=queues.render2d,
+            start_to_close=_RENDER_TIMEOUT,
+        )
+        master_key = _require_str(render, "master_key", ACTIVITY_PLAN_2D_RENDER)
+        room_anchors_key = _require_str(render, "room_anchors_key", ACTIVITY_PLAN_2D_RENDER)
+        products.append(
+            TaskProduct(product="plan_master", object_key=master_key, content_type="image/png")
+        )
+        products.append(
+            TaskProduct(
+                product="brief_image",
+                object_key=_require_str(render, "brief_key", ACTIVITY_PLAN_2D_RENDER),
+                content_type="image/png",
+                gen_params={"note_count": len(notes)},
+            )
+        )
+
+        annotations = annotations_from_notes(notes)
+        mood_result, style_result = await _gather_steps(
+            _run_step(
+                ACTIVITY_ATMOSPHERE_VISUAL,
+                {
+                    "master_object_key": master_key,
+                    "room_anchors_object_key": room_anchors_key,
+                    "template_id": spec.templates.mood,
+                },
+                task_queue=queues.imagegen,
+                start_to_close=_IMAGEGEN_TIMEOUT,
+            ),
+            _run_step(
+                ACTIVITY_ATMOSPHERE_VISUAL,
+                {
+                    "master_object_key": master_key,
+                    "room_anchors_object_key": room_anchors_key,
+                    "template_id": spec.templates.style,
+                    "annotations": annotations,
+                },
+                task_queue=queues.imagegen,
+                start_to_close=_IMAGEGEN_TIMEOUT,
+            ),
+        )
+        products.append(
+            TaskProduct(
+                product="style_image",
+                object_key=_require_str(
+                    style_result, "image_object_key", ACTIVITY_ATMOSPHERE_VISUAL
+                ),
+                content_type=_optional_str(style_result, "content_type"),
+                gen_params={
+                    "template_id": spec.templates.style,
+                    "annotation_count": len(annotations),
+                },
+            )
+        )
+
+        mood_key = _require_str(mood_result, "image_object_key", ACTIVITY_ATMOSPHERE_VISUAL)
+        captioned = await _run_step(
+            ACTIVITY_STYLE_CAPTION_OVERLAY,
+            {"style_object_key": mood_key, "copy": copy},
+            task_queue=queues.render2d,
+            start_to_close=_RENDER_TIMEOUT,
+        )
+        products.append(
+            TaskProduct(
+                product="mood_image",
+                object_key=_require_str(
+                    captioned, "image_object_key", ACTIVITY_STYLE_CAPTION_OVERLAY
+                ),
+                content_type="image/png",
+                gen_params={"template_id": spec.templates.mood, "base_object_key": mood_key},
+            )
+        )
+
+    async def _parse_floorplan(
+        self, spec: FloorplanVisualsSpec
+    ) -> tuple[TaskProduct | None, list[str]]:
+        """旁路：特征解析。失败不致命——三张图不等它，报告那条腿届时按键发现没有再说。"""
+        try:
+            reading = await _run_step(
+                ACTIVITY_FLOORPLAN_PARSE,
+                {"floorplan_object_key": spec.floorplan_object_key},
+                task_queue=spec.queues.genpipe,
+            )
+            reading_key = _require_str(reading, "reading_key", ACTIVITY_FLOORPLAN_PARSE)
+        except StepFailure as err:
+            return None, [err.check]
+        return (
+            TaskProduct(
+                product="floorplan_reading",
+                object_key=reading_key,
+                content_type="application/json",
+                gen_params={"layout_features": reading.get("layout_features") or {}},
+            ),
+            [],
+        )
+
+    async def _deliver(
+        self, spec: FloorplanVisualsSpec, result_payload: dict[str, Any], failed_checks: list[str]
+    ) -> bool:
+        try:
+            delivered = await _execute(
+                ACTIVITY_TASK_RESULT_DELIVER,
+                {"result_callback_url": spec.result_callback_url, "result": result_payload},
+                task_queue=spec.queues.genpipe,
+                retry_policy=_DELIVER_RETRY,
+            )
+        except (ActivityError, PipelineDataError) as err:
+            failed_checks.append(f"{ACTIVITY_TASK_RESULT_DELIVER}:{describe_failure(err)}")
+            return False
+        if delivered.get("verdict") != "ok":
+            failed_checks.append(
+                f"{ACTIVITY_TASK_RESULT_DELIVER}:{summarize_violations(delivered)}"
+            )
+            return False
+        return True
+
+
+async def _run_step(
+    activity_name: str,
+    arg: Any,
+    *,
+    task_queue: str,
+    start_to_close: timedelta | None = None,
+) -> dict[str, Any]:
+    """派一步主链 activity：抛错、verdict≠ok 都收成 StepFailure（带步名与原因）。"""
+    try:
+        result = await _execute(
+            activity_name, arg, task_queue=task_queue, start_to_close=start_to_close
+        )
+    except (ActivityError, PipelineDataError) as err:
+        raise StepFailure(activity_name, describe_failure(err)) from err
+    if result.get("verdict") != "ok":
+        raise StepFailure(activity_name, summarize_violations(result))
+    return result
+
+
+async def _gather_steps(
+    first: Coroutine[Any, Any, dict[str, Any]], second: Coroutine[Any, Any, dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """两步并行，**两步都收齐再判**：一步先失败也不取消另一步——另一步的产物是血缘，
+    且它的失败原因是同一轮该一起看到的信号。第一个失败上抛。"""
+    outcomes = await asyncio.gather(first, second, return_exceptions=True)
+    for outcome in outcomes:
+        if isinstance(outcome, StepFailure):
+            raise outcome
+        if isinstance(outcome, BaseException):
+            raise outcome
+    left, right = outcomes
+    assert isinstance(left, dict) and isinstance(right, dict)  # noqa: S101 - 上面已排除异常
+    return left, right
+
+
+def _require_str(result: dict[str, Any], field: str, activity_name: str) -> str:
+    """verdict=ok 却缺关键出参（键为空）＝产物没落地却回报成功，按失败处理。"""
+    value = result.get(field)
+    if not isinstance(value, str) or not value:
+        raise StepFailure(activity_name, f"missing-{field.replace('_', '-')}")
+    return value
+
+
+def _optional_str(result: dict[str, Any], field: str) -> str | None:
+    value = result.get(field)
+    return value if isinstance(value, str) and value else None

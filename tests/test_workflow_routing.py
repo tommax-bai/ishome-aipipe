@@ -9,10 +9,19 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from genpipe.models import GenerationTaskSpec, TaskQueues, TaskStep
+from genpipe.models import (
+    FloorplanVisualsSpec,
+    GenerationTaskSpec,
+    TaskProduct,
+    TaskQueues,
+    TaskStep,
+)
 from genpipe.workflows import (
     PipelineDataError,
+    annotations_from_notes,
     build_task_chain,
+    build_task_result,
+    captioned_key_of,
     collect_violations,
     describe_failure,
     evaluate_gate,
@@ -20,6 +29,7 @@ from genpipe.workflows import (
     partition_unit_outcomes,
     pick_template,
     resolve_step_arg,
+    summarize_violations,
     unexplained_failure_checks,
 )
 
@@ -245,3 +255,85 @@ def test_unexplained_failure_gets_orchestration_code() -> None:
         "report-book-check:failed-without-violations"
     ]
     assert unexplained_failure_checks("report-book-check", [{"check": "cr-set-closure"}]) == []
+
+
+# ---------------------------------------------------------------------------
+# 三张图生成线（FloorplanVisualsWorkflow）的纯函数
+# ---------------------------------------------------------------------------
+
+
+def _visuals_spec() -> FloorplanVisualsSpec:
+    return FloorplanVisualsSpec(
+        task_id="01J0TASK",
+        floorplan_object_key="uploads/" + "c" * 64 + "/original.png",
+        result_callback_url="http://127.0.0.1:8103/api/v1/generation-tasks/01J0TASK/result",
+    )
+
+
+def test_annotations_keep_only_digit_free_notes_and_drop_cites() -> None:
+    """imagegen 拒收带数字的注释：数字上图走叠印那条线；cites 是说明图那边的事，不带。"""
+    notes: list[dict[str, Any]] = [
+        {"room": "主卧", "text": "早上先亮起来的是这间", "cites": ["plan-daylight-主卧"]},
+        {"room": "阳台", "text": "阳台的长边约是短边的 2.9 倍", "cites": ["plan-shape-阳台"]},
+        {"room": "玄关", "text": "   ", "cites": ["x"]},
+        {"text": "没有房间的句子"},
+    ]
+    assert annotations_from_notes(notes) == [{"room": "主卧", "text": "早上先亮起来的是这间"}]
+
+
+def test_captioned_key_swaps_extension_for_captioned_png() -> None:
+    prefix = "uploads/" + "c" * 64
+    assert (
+        captioned_key_of(f"{prefix}/atmosphere-cream-journal.jpg")
+        == f"{prefix}/atmosphere-cream-journal-captioned.png"
+    )
+
+
+def test_summarize_violations_flattens_or_names_missing() -> None:
+    assert summarize_violations({"verdict": "failed"}) == "failed-without-violations"
+    assert (
+        summarize_violations(
+            {"violations": [{"check": "a", "detail": "x"}, {"check": "b", "detail": "y"}]}
+        )
+        == "a=x; b=y"
+    )
+
+
+def test_task_result_payload_matches_project_v1_contract_on_success() -> None:
+    """回调报文只装契约里有的字段；成功时没有 failure。"""
+    products = [
+        TaskProduct(product="plan_master", object_key="k1", content_type="image/png"),
+        TaskProduct(product="mood_image", object_key="k2", gen_params={"template_id": "t"}),
+    ]
+    payload = build_task_result(
+        _visuals_spec(),
+        verdict="ok",
+        products=products,
+        failed_checks=["floorplan-parse:gateway-down"],
+        failure=None,
+        workflow_id="wf",
+        run_id="run",
+    )
+    assert set(payload) == {"task_id", "status", "products", "workflow_id", "run_id"}
+    assert payload["status"] == "completed"
+    assert payload["products"][1] == {
+        "product": "mood_image",
+        "object_key": "k2",
+        "content_type": None,
+        "gen_params": {"template_id": "t"},
+    }
+
+
+def test_task_result_payload_carries_failure_with_other_checks_folded_in() -> None:
+    payload = build_task_result(
+        _visuals_spec(),
+        verdict="failed",
+        products=[],
+        failed_checks=["plan-2d-render:gate-bad-geometry", "floorplan-parse:timeout"],
+        failure={"code": "plan-2d-render", "detail": "gate-bad-geometry"},
+        workflow_id="wf",
+        run_id="run",
+    )
+    assert payload["status"] == "failed"
+    assert payload["failure"]["code"] == "plan-2d-render"
+    assert payload["failure"]["detail"] == "gate-bad-geometry；其余：floorplan-parse:timeout"

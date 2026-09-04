@@ -173,6 +173,68 @@ class ReportComposeResult(BaseModel):
     编排侧不签链接：签名是"给谁看、看多久"的事，属业务侧（生成侧不知用户是谁）。"""
 
 
+FloorplanVisualsProduct = Literal[
+    "mood_image",
+    "brief_image",
+    "style_image",
+    "plan_master",
+    "floorplan_geometry",
+    "floorplan_reading",
+]
+"""三张图生成线交回的产物词表（contracts `openapi/genpipe.v1.yaml`
+floorplan_visuals_product，只增不改）。业务侧把它映射成自己的 artifact_type——两套词表各归各的仓。"""
+
+
+class FloorplanVisualTemplates(BaseModel):
+    """三张免费图用哪些模板（数据，不是代码）：情绪图底图 + 手账写字版风格图。
+
+    默认值＝现行拍定组合（contracts `registries/templates.md` 2026-09-04 落定）；
+    生产调用方不传。功能说明图不经图像模型（render2d 制图），不在此列。
+    """
+
+    mood: str = "cream-journal"
+    style: str = "lifestyle-notebook-handwritten"
+
+
+class FloorplanVisualsSpec(BaseModel):
+    """三张免费图一次生成的编排输入（project-svc 铸任务 → 派发入口，contracts genpipe.v1）。"""
+
+    task_id: str
+    """生成任务 id（project-svc 铸造的 ULID）：workflow_id 由其派生，重复派发即冲突上抛。"""
+    floorplan_object_key: str
+    """用户上传的户型图在私有桶里的键（`uploads/{content_sha256}/original.{ext}`）。"""
+    building_area_sqm: float | None = None
+    floor_area_ratio_percent: float | None = None
+    result_callback_url: str
+    """结果回流地址：由派发方注入，编排侧不知道业务侧在哪（规范 §1.0 向上通信只走回调）。"""
+    templates: FloorplanVisualTemplates = Field(default_factory=FloorplanVisualTemplates)
+    queues: TaskQueues = Field(default_factory=TaskQueues)
+
+
+class TaskProduct(BaseModel):
+    """一件交回业务侧的产物（project.v1 `generation_task_product` 的编排侧形态）。"""
+
+    product: FloorplanVisualsProduct
+    object_key: str
+    content_type: str | None = None
+    gen_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class FloorplanVisualsResult(BaseModel):
+    """三张图生成线一次运行的结论（同时也是回调报文的来源）。"""
+
+    task_id: str
+    verdict: ReportVerdict
+    products: list[TaskProduct] = Field(default_factory=list)
+    """verdict=ok 时含三张图 + 母版 + 几何（+ 特征解析）；failed 时是已出的半成品，只留血缘。"""
+    failed_checks: list[str] = Field(default_factory=list)
+    """编排层失败码：主链某步失败、特征解析失败（不致命）、回调送不到，都记在这里。"""
+    failure: dict[str, Any] | None = None
+    """主链失败原因 {code, detail}；verdict=ok 时为空。"""
+    delivered: bool = False
+    """结论是否已送到回调地址。**没送到不算完**：业务侧不知道就等于没做。"""
+
+
 class WorkflowStartReceipt(BaseModel):
     """start workflow 即返回的回执（任务层异步：结果经事件回流，不在请求内等待）。"""
 

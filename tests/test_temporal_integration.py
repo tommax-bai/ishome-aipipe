@@ -17,8 +17,19 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from genpipe.models import GenBatchSpec, GenerationTaskSpec, ReportComposeSpec, TaskQueues
-from genpipe.workflows import GenBatchWorkflow, GenerationTaskWorkflow, ReportComposeWorkflow
+from genpipe.models import (
+    FloorplanVisualsSpec,
+    GenBatchSpec,
+    GenerationTaskSpec,
+    ReportComposeSpec,
+    TaskQueues,
+)
+from genpipe.workflows import (
+    FloorplanVisualsWorkflow,
+    GenBatchWorkflow,
+    GenerationTaskWorkflow,
+    ReportComposeWorkflow,
+)
 from temporalio import activity
 from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 from temporalio.client import Client
@@ -516,3 +527,166 @@ async def test_report_compose_rejects_duplicate_domains_before_dispatch() -> Non
     assert result.failed_stage == "unit-compose"
     assert result.failed_checks == ["duplicate-domains"]
     assert log == []
+
+
+# ---------------------------------------------------------------------------
+# 三张免费图生成线（FloorplanVisualsWorkflow）：主链 / 旁路不致命 / 主链失败也回流
+# ---------------------------------------------------------------------------
+
+_VISUALS_KEY = "uploads/" + "e" * 64 + "/original.png"
+_VISUALS_PREFIX = "uploads/" + "e" * 64
+
+
+def _visuals_behaviors(log: CallLog) -> dict[str, MockImpl]:
+    """全链 mock：出参形态照各仓真 activity 的回执（键名逐字），只把内容换成假的。"""
+    return {
+        "floorplan-geometry-extract": lambda _: {
+            "verdict": "ok",
+            "geometry_key": f"{_VISUALS_PREFIX}/floorplan-geometry.json",
+            "geometry": {"planBox": [0, 0, 1, 1], "walls": [], "openings": [], "rooms": []},
+            "facts": [{"factId": "plan-share-主卧", "subject": "主卧", "statement": "主卧占 30%"}],
+            "room_names": ["主卧", "客厅"],
+        },
+        "plan-notes-write": lambda _: {
+            "verdict": "ok",
+            "notes": [
+                {"room": "主卧", "text": "早上先亮起来的是这间", "cites": ["plan-share-主卧"]},
+                {"room": "客厅", "text": "客厅占了 30% 的面积", "cites": ["plan-share-主卧"]},
+            ],
+            "rejected": [],
+        },
+        "plan-copy-write": lambda _: {
+            "verdict": "ok",
+            "copy": {"title": "光照进来的家", "summary": "一句话", "tips": ["a", "b", "c"]},
+        },
+        "plan-2d-render": lambda arg: {
+            "verdict": "ok",
+            "master_key": f"{_VISUALS_PREFIX}/plan-master.png",
+            "room_anchors_key": f"{_VISUALS_PREFIX}/plan-rooms.json",
+            "brief_key": f"{_VISUALS_PREFIX}/plan-brief.png" if arg.get("notes") else None,
+        },
+        "atmosphere-visual": lambda arg: {
+            "verdict": "ok",
+            "image_object_key": f"{_VISUALS_PREFIX}/atmosphere-{arg['template_id']}.jpg",
+            "content_type": "image/jpeg",
+        },
+        "style-caption-overlay": lambda arg: {
+            "verdict": "ok",
+            "image_object_key": arg["style_object_key"].rsplit(".", 1)[0] + "-captioned.png",
+        },
+        "floorplan-parse": lambda _: {
+            "verdict": "ok",
+            "reading_key": f"{_VISUALS_PREFIX}/floorplan-reading.json",
+            "layout_features": {"balcony_utility": "阳台画了洗衣机"},
+        },
+        "task-result-deliver": lambda _: {"verdict": "ok", "status_code": 200, "receipt": {}},
+    }
+
+
+async def _run_visuals(
+    client: Client, behaviors: dict[str, MockImpl], log: CallLog, queue: str
+) -> Any:
+    spec = FloorplanVisualsSpec(
+        task_id=uuid.uuid4().hex,
+        floorplan_object_key=_VISUALS_KEY,
+        result_callback_url="http://127.0.0.1:1/api/v1/generation-tasks/x/result",
+        queues=TaskQueues(genpipe=queue, render2d=queue, imagegen=queue, render3d=queue),
+    )
+    worker = Worker(
+        client,
+        task_queue=queue,
+        workflows=[FloorplanVisualsWorkflow],
+        activities=_make_mock_activities(behaviors, log),
+    )
+    async with worker:
+        return await client.execute_workflow(
+            FloorplanVisualsWorkflow.run, spec, id=f"it-visuals-{spec.task_id}", task_queue=queue
+        )
+
+
+async def test_floorplan_visuals_happy_path_yields_six_products_and_delivers() -> None:
+    client = await _client_or_skip()
+    log: CallLog = []
+    queue = f"it-{uuid.uuid4().hex}"
+    result = await _run_visuals(client, _visuals_behaviors(log), log, queue)
+
+    assert result.verdict == "ok", result
+    assert result.delivered is True
+    assert {p.product for p in result.products} == {
+        "floorplan_geometry",
+        "plan_master",
+        "brief_image",
+        "style_image",
+        "mood_image",
+        "floorplan_reading",
+    }
+    by_product = {p.product: p for p in result.products}
+    assert by_product["mood_image"].object_key.endswith("atmosphere-cream-journal-captioned.png")
+    assert by_product["style_image"].object_key.endswith(
+        "atmosphere-lifestyle-notebook-handwritten.jpg"
+    )
+    # 两张风格图：情绪图底图不带注释；手账写字版只带不含数字的那条
+    atmosphere_calls = [arg for name, arg in log if name == "atmosphere-visual"]
+    assert {c["template_id"] for c in atmosphere_calls} == {
+        "cream-journal",
+        "lifestyle-notebook-handwritten",
+    }
+    style_call = next(c for c in atmosphere_calls if c["template_id"].endswith("handwritten"))
+    assert style_call["annotations"] == [{"room": "主卧", "text": "早上先亮起来的是这间"}]
+    assert "annotations" not in next(
+        c for c in atmosphere_calls if c["template_id"] == "cream-journal"
+    )
+    # 母版吃内联几何 + 全部批注（含带数字的那条——说明图画得了数字）
+    render_call = next(arg for name, arg in log if name == "plan-2d-render")
+    assert render_call["floorplan_object_key"] == _VISUALS_KEY and len(render_call["notes"]) == 2
+    # 回调报文按契约：completed + 六件产物
+    deliver_call = next(arg for name, arg in log if name == "task-result-deliver")
+    assert deliver_call["result_callback_url"].endswith("/result")
+    assert deliver_call["result"]["status"] == "completed"
+    assert len(deliver_call["result"]["products"]) == 6
+    assert "failure" not in deliver_call["result"]
+
+
+async def test_floorplan_visuals_parse_failure_is_not_fatal() -> None:
+    client = await _client_or_skip()
+    log: CallLog = []
+    behaviors = _visuals_behaviors(log) | {
+        "floorplan-parse": lambda _: {
+            "verdict": "failed",
+            "violations": [{"check": "floorplan-parse-failed", "detail": "网关没这个逻辑名"}],
+        }
+    }
+    queue = f"it-{uuid.uuid4().hex}"
+    result = await _run_visuals(client, behaviors, log, queue)
+
+    assert result.verdict == "ok"
+    assert "floorplan_reading" not in {p.product for p in result.products}
+    assert any(check.startswith("floorplan-parse:") for check in result.failed_checks)
+    deliver_call = next(arg for name, arg in log if name == "task-result-deliver")
+    assert deliver_call["result"]["status"] == "completed"
+
+
+async def test_floorplan_visuals_main_chain_failure_still_delivers_failed_result() -> None:
+    client = await _client_or_skip()
+    log: CallLog = []
+    behaviors = _visuals_behaviors(log) | {
+        "plan-2d-render": lambda _: {
+            "verdict": "failed",
+            "violations": [{"check": "plan-master-failed", "detail": "外圈闭合率 64%"}],
+        }
+    }
+    queue = f"it-{uuid.uuid4().hex}"
+    result = await _run_visuals(client, behaviors, log, queue)
+
+    assert result.verdict == "failed"
+    assert result.failure == {
+        "code": "plan-2d-render",
+        "detail": "plan-master-failed=外圈闭合率 64%",
+    }
+    assert result.delivered is True
+    # 半成品血缘：几何有了，图一张都没有
+    assert {p.product for p in result.products} == {"floorplan_geometry", "floorplan_reading"}
+    assert not any(name == "atmosphere-visual" for name, _ in log)
+    deliver_call = next(arg for name, arg in log if name == "task-result-deliver")
+    assert deliver_call["result"]["status"] == "failed"
+    assert deliver_call["result"]["failure"]["code"] == "plan-2d-render"
