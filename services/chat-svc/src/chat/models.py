@@ -142,3 +142,14 @@ class ProjectState(BaseModel):
     open_confirmation_ids: list[str] = Field(default_factory=list)
     # 最小必要输入（§3.1）是否已全部 user_confirmed——初步方案生成的前置门
     minimum_inputs_confirmed: bool = False
+
+    business_project_id: str | None = None
+    """业务侧（project-svc）的项目 id——会话侧上报事实用的定址，由业务侧按属主铸、本侧缓存。
+    缓存丢了（进程重启）就再按属主问一次：那一跳幂等。"""
+
+    reported_slots: dict[str, str] = Field(default_factory=dict)
+    """已经报给业务侧的槽位 → 值。只报新的或变了的：业务侧那边 upsert 本就幂等，这里省的是
+    每轮一次无谓的往返（以及它连带的一次里程碑判定）。"""
+
+    deliveries_seen: list[str] = Field(default_factory=list)
+    """已经发过的送达标识（delivery_id）：业务侧中继重投时不在聊天线程里发第二遍。"""

@@ -284,6 +284,46 @@ def upload_fact() -> Fact:
     )
 
 
+def upload_object_key_fact(object_key: str) -> Fact:
+    """他传的那张图在私有桶里的键——渠道侧落桶后随统一消息带来，**由代码记**。
+
+    这条键是三张图整条线的入参（业务侧派发、生成侧取图都靠它），和"他传了图"那条一起记：
+    前者说"有图"，后者说"图在哪"。
+    """
+    return Fact(
+        target_id="floorplan",
+        property="object_key",
+        value=object_key,
+        cognitive_state="observed",
+        source="channel_upload",
+    )
+
+
+def find_floorplan_object_key(project: ProjectState) -> str | None:
+    """他传的户型图在私有桶里的键。find = 可空。"""
+    for fact in project.base_facts.facts:
+        if (
+            fact.target_id == "floorplan"
+            and fact.property == "object_key"
+            and isinstance(fact.value, str)
+            and fact.value
+        ):
+            return fact.value
+    return None
+
+
+def find_floor_area_ratio_percent(project: ProjectState) -> float | None:
+    """业主主动给的得房率（百分数）。find = 可空——没给不追问，按面积推。"""
+    for fact in project.base_facts.facts:
+        if (
+            fact.target_id == "floorplan"
+            and fact.property == "floor_area_ratio"
+            and isinstance(fact.value, int | float)
+        ):
+            return float(fact.value)
+    return None
+
+
 def merge_facts(project: ProjectState, new_facts: Sequence[Fact]) -> list[Fact]:
     """按 fact_key 合并（同键替换=修正）；返回本轮新记录的结构类事实。
 

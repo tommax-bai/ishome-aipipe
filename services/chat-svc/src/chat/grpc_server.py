@@ -4,7 +4,8 @@
 
 - 入站 → service 单向（import-linter 锁定，禁越层触 repo）；
 - 联调契约：本服务默认监听 :9101（env `CHAT_GRPC_PORT`），出站回话经
-  channel-svc gRPC（env `CHANNEL_GRPC_TARGET`，默认 localhost:9102）；
+  channel-svc gRPC（env `CHANNEL_GRPC_TARGET`，默认 localhost:9102）；事实上报经
+  project-svc REST（env `PROJECT_HTTP_BASE_URL`，默认 http://127.0.0.1:8103）；
 - 存储：env `CHAT_DATABASE_URL` 设置时会话消息落 PG（schema svc_chat，先跑
   `uv run chat-migrate` 建表），未设时内存（e2e-mock-smoke 裸起可跑）——
   后端选择在 repo 层，此处零装配；
@@ -24,6 +25,7 @@ from ishome.design.v1 import service_pb2, service_pb2_grpc
 from chat import service as chat_service
 from chat.channel_client import DEFAULT_CHANNEL_GRPC_TARGET, ChannelClient
 from chat.llm_client import LiteLlmClient
+from chat.project_client import DEFAULT_PROJECT_HTTP_BASE_URL, ProjectClient
 
 DEFAULT_CHAT_GRPC_PORT = 9101
 
@@ -38,18 +40,31 @@ class DesignGrpcServicer(service_pb2_grpc.DesignServiceServicer):
         sender: chat_service.OutboundSender,
         llm: chat_service.LlmCompletion,
         capability: chat_service.CapabilityLookup | None = None,
+        business: chat_service.BusinessSideGateway | None = None,
     ) -> None:
         self._sender = sender
         self._llm = llm
         self._capability = capability
+        self._business = business
 
     async def IngestMessage(
         self, request: service_pb2.IngestMessageRequest, context: Any
     ) -> service_pb2.IngestMessageResponse:
         message_id = await chat_service.ingest_message(
-            request.message, self._sender, self._llm, self._capability
+            request.message, self._sender, self._llm, self._capability, self._business
         )
         return service_pb2.IngestMessageResponse(message_id=message_id)
+
+    async def PresentDeliverables(
+        self, request: service_pb2.PresentDeliverablesRequest, context: Any
+    ) -> service_pb2.PresentDeliverablesResponse:
+        """业务侧送来产物（或"没做出来"）：经渠道发进聊天线程，随后说假设（2026-09-04 接线）。"""
+        try:
+            delivered, message_ids = await chat_service.present_deliverables(request, self._sender)
+        except ValueError as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+            raise AssertionError("unreachable") from e
+        return service_pb2.PresentDeliverablesResponse(delivered=delivered, message_ids=message_ids)
 
     async def SubmitConfirmation(
         self, request: service_pb2.SubmitConfirmationRequest, context: Any
@@ -84,11 +99,12 @@ def build_server(
     sender: chat_service.OutboundSender,
     llm: chat_service.LlmCompletion,
     capability: chat_service.CapabilityLookup | None = None,
+    business: chat_service.BusinessSideGateway | None = None,
 ) -> Any:
     """组装 grpc.aio server（未绑定端口——测试用 :0 随机端口，serve 用配置端口）。"""
     server = grpc.aio.server()
     service_pb2_grpc.add_DesignServiceServicer_to_server(
-        DesignGrpcServicer(sender, llm, capability), server
+        DesignGrpcServicer(sender, llm, capability, business), server
     )
     return server
 
@@ -97,16 +113,21 @@ async def serve() -> None:
     port = int(os.environ.get("CHAT_GRPC_PORT", DEFAULT_CHAT_GRPC_PORT))
     bind = os.environ.get("CHAT_GRPC_BIND", "0.0.0.0")
     channel_target = os.environ.get("CHANNEL_GRPC_TARGET", DEFAULT_CHANNEL_GRPC_TARGET)
+    project_base_url = os.environ.get("PROJECT_HTTP_BASE_URL", DEFAULT_PROJECT_HTTP_BASE_URL)
     llm = LiteLlmClient()
-    async with ChannelClient(channel_target) as channel_client:
+    async with (
+        ChannelClient(channel_target) as channel_client,
+        ProjectClient(project_base_url) as project_client,
+    ):
         try:
-            server = build_server(channel_client, llm, channel_client)
+            server = build_server(channel_client, llm, channel_client, project_client)
             server.add_insecure_port(f"{bind}:{port}")
             await server.start()
             logger.info(
-                "chat-svc gRPC listening on :%d, channel target %s, llm gateway %s",
+                "chat-svc gRPC listening on :%d, channel target %s, project %s, llm gateway %s",
                 port,
                 channel_target,
+                project_client.base_url,
                 llm.base_url,
             )
             await server.wait_for_termination()

@@ -352,6 +352,25 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "chat 出站边缘 project_client 不感知上层：只依赖运行库与 contracts 生成的枚举（事实上报那一跳）"
+type = "forbidden"
+source_modules = ["chat.project_client"]
+forbidden_modules = [
+  "chat.service",
+  "chat.router",
+  "chat.grpc_server",
+  "chat.repo",
+  "chat.models",
+  "chat.intent",
+  "chat.orchestrator",
+  "chat.assumptions",
+  "chat.channel_client",
+  "chat.llm_client",
+  "fastapi",
+  "grpc",
+]
+
+[[tool.importlinter.contracts]]
 name = "chat 出站边缘 llm_client 不感知上层：只依赖运行库（模型轴 R7 一轴一层）"
 type = "forbidden"
 source_modules = ["chat.llm_client"]

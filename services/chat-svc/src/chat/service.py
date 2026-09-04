@@ -9,6 +9,11 @@
 （裁决 8-31 原话"产出结果之后也告诉用户"）。确认闭环（清单 → user_confirmed 升级）
 机件保留，时点同样挪到真有产出可确认时——两处都不是删掉，是等它们该发生的那一刻。
 
+**2026-09-04 接线**：每轮回话之前把新到的事实（户型图对象键、建筑面积、按面积推的得房率）
+报给业务侧（`BusinessSideGateway`，contracts project.v1）——会话侧不判里程碑不建任务，
+业务侧判定并派发三张图；图好了业务侧经 `PresentDeliverables` 回来，本层经渠道发进聊天线程，
+随后才说假设。上报失败对业主如实说（`REPORT_FAILED_MESSAGES`），事实留在快照里下一轮再报。
+
 存储：`CHAT_DATABASE_URL` 设置时消息原文落 PG（schema svc_chat），未设时内存
 （e2e-mock-smoke 裸起可跑）——选择在 repo 层，本层不感知。会话态（项目快照/
 上下文历史）为进程内缓存，Redis 接入位在 repo.SessionCache。
@@ -31,12 +36,14 @@ from typing import Protocol, cast
 
 from ishome.channel.v1 import message_pb2
 from ishome.common.v1 import channel_type_pb2
+from ishome.design.v1 import service_pb2 as design_service_pb2
 from ulid import ULID
 
 from chat import intent as intent_router
 from chat import orchestrator
-from chat.assumptions import assumption_messages, infer_from_area
+from chat.assumptions import DEFAULT_FLOOR_AREA_RATIO_PERCENT, assumption_messages, infer_from_area
 from chat.models import ChatMessage, ConversationRef, ConversationTurn, ProjectState
+from chat.project_client import BusinessProject, MilestoneProgress, ProjectClientError, SlotFill
 from chat.repo import (
     append_history,
     find_or_create_project,
@@ -63,6 +70,26 @@ DESIGN_START_MESSAGES: tuple[str, ...] = (
 第二条也**不再向他要任何信息**：说清"你不用再准备什么"，比只在提示词里禁止追问更牢靠。
 """
 
+REPORT_FAILED_MESSAGES: tuple[str, ...] = (
+    "你发的我都记下了，不过我这边的设计系统刚才没接上。",
+    "过一会儿再随便发我一句话，我接着往下做。",
+)
+"""上报业务侧失败时对业主说的——如实说没接上，不装作在做（红线"失败要说人话"）。
+事实仍在快照里，下一轮入站会再报一次；第二条给的是"怎么触发再试"的出路，不是追问信息。"""
+
+GENERATION_FAILED_MESSAGES: tuple[str, ...] = (
+    "这套图我这边没做出来。",
+    "你可以换一张更清楚的户型图发我，或者过一会儿再发一遍，我再试一次。",
+)
+"""业务侧送来"没做出来"时对业主说的（v0.3 §9 失败路径显式）：诚实告知 + 两条出路。"""
+
+DELIVERABLE_CAPTIONS: dict[str, str] = {
+    "vision_mood_image": "第一张：你家的样子",
+    "vision_brief_image": "第二张：每间房怎么用",
+    "vision_style_image": "第三张：手账版",
+}
+"""三张图各自随图一句（系统文案，分条规矩管；产物类型是业务侧的数据值，本侧只查表不理解）。"""
+
 # 分条之间的停顿（用户裁决 2026-08-31）：一轮多条要按上一条的长度歇一下再发下一条——
 # 三条瞬间刷屏，读的人还没看完第一条就被第二条盖过去了，分条反而比不分更难读。
 # 不模拟打字速度（那会慢到烦人），只给一个"够看完上一句"的短拍。
@@ -86,6 +113,17 @@ class CapabilityLookup(Protocol):
     async def supports_quick_reply(self, channel_type: int, channel_instance: str) -> bool: ...
 
 
+class BusinessSideGateway(Protocol):
+    """业务侧（project-svc）协议位：按属主取或建项目、报一批槽位
+    （实现 project_client.ProjectClient）。"""
+
+    async def find_or_create_project(
+        self, channel_type: int, channel_instance: str, external_user_id: str
+    ) -> BusinessProject: ...
+
+    async def fill_slots(self, project_id: str, slots: Sequence[SlotFill]) -> MilestoneProgress: ...
+
+
 async def get_project(project_id: str) -> ProjectState:
     """get = 必得（取不到抛异常）。"""
     project = await find_project(project_id)
@@ -99,8 +137,12 @@ async def ingest_message(
     sender: OutboundSender,
     llm: LlmCompletion,
     capability: CapabilityLookup | None = None,
+    business: BusinessSideGateway | None = None,
 ) -> str:
-    """会话入站处理；返回入站 message_id。"""
+    """会话入站处理；返回入站 message_id。
+
+    `business` 为空＝没接业务侧（e2e-mock-smoke 裸起、旧单测）：事实只留在会话快照里，不上报。
+    """
     conversation = _conversation_ref(inbound)
     # 入站原文落存即幂等门：幂等键（=渠道消息 id）已存过说明是渠道重投，跳过
     if not await record_inbound(conversation, _inbound_message(inbound)):
@@ -125,6 +167,15 @@ async def ingest_message(
         logger.exception("conversation turn failed: message_id=%s", inbound.message_id)
         reply_texts, quick_reply_checklist = [FALLBACK_REPLY], None
 
+    # 上报业务侧：在回话之前——"开始设计"这句要建立在业务侧真的接了活的基础上。
+    # 没接上就如实说（不装作在做），事实留在快照里下一轮再报。
+    if business is not None:
+        try:
+            await report_facts(conversation, project, business, source_event_id=inbound.message_id)
+        except ProjectClientError:
+            logger.exception("business-side report failed: message_id=%s", inbound.message_id)
+            reply_texts = [*reply_texts, *REPORT_FAILED_MESSAGES]
+
     await append_history(conversation, ConversationTurn(role="user", text=user_text))
     outbounds = [_text_reply(inbound, text) for text in reply_texts]
     if quick_reply_checklist is not None:
@@ -135,6 +186,131 @@ async def ingest_message(
     )
     await save_project(conversation, project)
     return inbound.message_id
+
+
+def pending_slot_fills(project: ProjectState, *, source_event_id: str) -> list[SlotFill]:
+    """快照里有、还没报给业务侧（或值变了）的槽位（纯函数）。
+
+    只报三样：户型图对象键、建筑面积（业主给的）、得房率（业主给的按 observed，没给按面积推
+    为 inferred 的默认值——数字不由 LLM 决定，推的那一步在 `assumptions`）。业务侧判据只看前两样。
+    """
+    candidates: list[tuple[str, str, str]] = []
+    object_key = orchestrator.find_floorplan_object_key(project)
+    if object_key:
+        candidates.append(("floorplan", object_key, "observed"))
+    area_sqm = orchestrator.find_building_area_sqm(project)
+    if area_sqm is not None:
+        candidates.append(("building_area_sqm", _number_text(area_sqm), "observed"))
+        given_ratio = orchestrator.find_floor_area_ratio_percent(project)
+        if given_ratio is not None:
+            candidates.append(("floor_area_ratio_percent", _number_text(given_ratio), "observed"))
+        else:
+            candidates.append(
+                ("floor_area_ratio_percent", str(DEFAULT_FLOOR_AREA_RATIO_PERCENT), "inferred")
+            )
+    return [
+        SlotFill(slot_key=key, value=value, cognitive_state=state, source_event_id=source_event_id)
+        for key, value, state in candidates
+        if project.reported_slots.get(key) != value
+    ]
+
+
+async def report_facts(
+    conversation: ConversationRef,
+    project: ProjectState,
+    business: BusinessSideGateway,
+    *,
+    source_event_id: str,
+) -> MilestoneProgress | None:
+    """把新到的事实报给业务侧（contracts project.v1）。没有新东西就不打这一跳。
+
+    会话侧不判里程碑、不建任务：业务侧回来的 `created_task_ids` 只记日志，不据此改会话形态——
+    图好没好，等它经 `PresentDeliverables` 回来。失败上抛 `ProjectClientError`，
+    由调用方决定怎么对业主说；
+    已报成功的槽位记进 `reported_slots`，重启丢了缓存也只是多报一次（业务侧 upsert 幂等）。
+    """
+    fills = pending_slot_fills(project, source_event_id=source_event_id)
+    if not fills:
+        return None
+    if project.business_project_id is None:
+        business_project = await business.find_or_create_project(
+            conversation.channel_type, conversation.channel_instance, conversation.external_user_id
+        )
+        project.business_project_id = business_project.project_id
+        logger.info(
+            "business project %s: id=%s milestone=%s",
+            "created" if business_project.created else "found",
+            business_project.project_id,
+            business_project.current_milestone,
+        )
+    progress = await business.fill_slots(project.business_project_id, fills)
+    for fill in fills:
+        project.reported_slots[fill.slot_key] = fill.value
+    logger.info(
+        "facts reported: project=%s slots=%s milestone=%s advanced=%s tasks=%s",
+        project.business_project_id,
+        [fill.slot_key for fill in fills],
+        progress.current_milestone,
+        progress.advanced,
+        progress.created_task_ids,
+    )
+    return progress
+
+
+async def present_deliverables(
+    request: design_service_pb2.PresentDeliverablesRequest,
+    sender: OutboundSender,
+) -> tuple[bool, list[str]]:
+    """业务侧送来一批产物（或"没做出来"）：经渠道发进聊天线程，随后说假设。
+    返回（这次发没发, 消息 id）。
+
+    **幂等**：同一 delivery_id 第二次到达不再发（业务侧中继会重投）。
+    产物按业务侧给的顺序发，每张前面一句系统文案（`DELIVERABLE_CAPTIONS`，查不到就不加）；
+    图都发完才调 `deliverables_delivered`——假设那套的时点写死在"图发到业主手里之后"。
+    """
+    conversation = ConversationRef(
+        channel_type=request.owner.channel_type,
+        channel_instance=request.owner.channel_instance,
+        external_user_id=request.owner.external_user_id,
+    )
+    if not request.delivery_id:
+        raise ValueError("delivery_id 为空：没有幂等键的送达不发")
+    project = await find_or_create_project(conversation)
+    if request.delivery_id in project.deliveries_seen:
+        logger.info("delivery already presented, skipped: delivery_id=%s", request.delivery_id)
+        return False, []
+
+    outbounds: list[message_pb2.UnifiedMessage] = []
+    if request.HasField("failure"):
+        logger.warning(
+            "generation failed for owner=%s task_type=%s code=%s detail=%s",
+            conversation.key,
+            request.failure.task_type,
+            request.failure.code,
+            request.failure.detail,
+        )
+        outbounds.extend(_text_message(conversation, text) for text in GENERATION_FAILED_MESSAGES)
+        prefix = f"failure-{request.delivery_id}"
+    else:
+        if not request.deliverables:
+            raise ValueError("既没有产物也没有失败说明：这次送达没有内容")
+        for item in request.deliverables:
+            caption = item.caption or DELIVERABLE_CAPTIONS.get(item.artifact_type, "")
+            if caption:
+                outbounds.append(_text_message(conversation, caption))
+            outbounds.append(_image_message(conversation, item.object_key))
+        prefix = f"deliver-{request.delivery_id}"
+
+    message_ids = await _send_all(conversation, sender, outbounds, idempotency_prefix=prefix)
+    project.deliveries_seen.append(request.delivery_id)
+    await save_project(conversation, project)
+    if not request.HasField("failure"):
+        await deliverables_delivered(conversation, sender, delivery_id=request.delivery_id)
+    return True, message_ids
+
+
+def _number_text(value: float) -> str:
+    return f"{value:.0f}" if float(value).is_integer() else f"{value:g}"
 
 
 async def deliverables_delivered(
@@ -189,18 +365,19 @@ async def _send_all(
     outbounds: Sequence[message_pb2.UnifiedMessage],
     *,
     idempotency_prefix: str,
-) -> None:
+) -> list[str]:
     """逐条发出，条与条之间按分条节拍歇一下，并把出站原文与上下文历史一并记上。
 
     **回话与主动消息共用这一个出口**：分条那条规矩（用户裁决 2026-08-31）此前只管住了模型的
     回复数组；系统写死的文案若自己另写一段发送逻辑，就绕过了停顿节拍、幂等键与落存——
     出口只留一个，绕不过去。
     """
+    message_ids: list[str] = []
     for seq, outbound in enumerate(outbounds):
         if seq > 0:
             await asyncio.sleep(_pacing_seconds(_outbound_text(outbounds[seq - 1])))
         idempotency_key = f"{idempotency_prefix}-{seq}"
-        await sender.send(outbound, idempotency_key=idempotency_key)
+        message_ids.append(await sender.send(outbound, idempotency_key=idempotency_key))
         await record_outbound(conversation, _outbound_message(outbound, idempotency_key))
         await append_history(
             conversation, ConversationTurn(role="assistant", text=_outbound_text(outbound))
@@ -210,6 +387,7 @@ async def _send_all(
             outbound.message_id,
             idempotency_key,
         )
+    return message_ids
 
 
 async def _converse(
@@ -232,7 +410,16 @@ async def _converse(
     # 图片入站：先把"他传了户型图"记上再算缺口——否则这一轮还按"还没有图"问，
     # 而他刚传的就是图（真机上问出了"您家在哪个小区？几室几厅？"）
     if inbound.WhichOneof("content") == "image":
-        orchestrator.merge_facts(project, [orchestrator.upload_fact()])
+        facts = [orchestrator.upload_fact()]
+        if inbound.image.object_key:
+            facts.append(orchestrator.upload_object_key_fact(inbound.image.object_key))
+        else:
+            # 渠道侧没落桶就转过来了：图没有键，后面一步都做不了——响亮记日志，不猜一个键
+            logger.warning(
+                "image inbound without object_key: message_id=%s（渠道侧未落桶）",
+                inbound.message_id,
+            )
+        orchestrator.merge_facts(project, facts)
 
     turn = await orchestrator.step(llm, project, await get_history(conversation), user_text)
     structural = orchestrator.merge_facts(project, turn.facts)
@@ -375,6 +562,17 @@ def _text_message(conversation: ConversationRef, text: str) -> message_pb2.Unifi
     return message
 
 
+def _image_message(conversation: ConversationRef, object_key: str) -> message_pb2.UnifiedMessage:
+    """主动消息的图片形态：只带私有桶对象键，渠道侧按键取桶再发（渠道出站那一段 9-01 已通）。"""
+    message = _outbound_envelope(
+        channel_type=conversation.channel_type,
+        channel_instance=conversation.channel_instance,
+        external_user_id=conversation.external_user_id,
+    )
+    message.image.CopyFrom(message_pb2.ImageContent(object_key=object_key))
+    return message
+
+
 def _quick_reply_checklist(
     inbound: message_pb2.UnifiedMessage, checklist_text: str
 ) -> message_pb2.UnifiedMessage:
@@ -427,6 +625,10 @@ def _outbound_envelope(
 
 
 def _outbound_text(outbound: message_pb2.UnifiedMessage) -> str:
-    if outbound.WhichOneof("content") == "quick_reply":
-        return outbound.quick_reply.prompt_text
-    return outbound.text.text
+    match outbound.WhichOneof("content"):
+        case "quick_reply":
+            return outbound.quick_reply.prompt_text
+        case "image":
+            return f"[发出一张图：{outbound.image.object_key}]"
+        case _:
+            return outbound.text.text
