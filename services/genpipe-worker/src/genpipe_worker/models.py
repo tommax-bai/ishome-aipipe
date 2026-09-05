@@ -197,12 +197,21 @@ class PlanWall(_FloorplanModel):
     bands: list[PlanWallBand] = Field(default_factory=list)
 
 
-class PlanOpening(_FloorplanModel):
-    """墙线上的一个洞：门、窗、或没有门扇的过口。坐标口径同 :class:`PlanWall`。
+OpeningKind = Literal["door", "window", "passage", "entry-door", "unknown"]
+"""洞口类型闭集。`passage` 是没有门扇的过口（开放式连通）；`entry-door` 是入户门
+（外轮廓上带门弧的洞，全户唯一——《户型图解析方法论》T1）；`unknown` 是**推不出**，不是"大概是门"。
+三维那侧今天自己按外墙＝窗、内墙＝门猜档位（render3d `HeightRules.outer_opening_kind`），
+本字段升为上游直给后改那一处即可。"""
 
-    **这一层不区分门和窗，只区分洞在外墙还是内墙**（`is_on_outer_wall`）——图上门与窗的
-    画法各家不同，而"洞的一侧在户型轮廓之外"是确定性可判的。要门窗之分得再走一步识别，
-    时点写死＝母版要画门扇与窗框那一批（本步只出坐标，画法归 render2d）。
+
+class PlanOpening(_FloorplanModel):
+    """墙线上的一个洞：门、窗、过口、入户门。坐标口径同 :class:`PlanWall`。
+
+    `is_on_outer_wall`（洞的一侧在户型轮廓之外）确定性可判、最早就有。`kind` 是 2026-09-05 加的：
+    三维写实化换到线稿控制通道后，剩下的构件级失效就是门窗类型（失效清单 B4——控制稿门画斜线、
+    窗画十字，上游没有类型字段，render3d 只能按外墙/内墙猜，真户型"补出来的 9 个洞"全标了门）。
+    类型**由确定性代码从像素里推**：门弧、跨洞平行线、门扇线三样证据，一样都没有就 `unknown`
+    并在 `kind_evidence` 里说清缺什么——**不许默认成 door**。
 
     洞宽是 `门洞反标定` 那一级标定物的输入（拍板清单 §〇 2026-08-30 标定四级的第三级）：
     结构件按图纸画、分布窄、不需任何图外信息。**本模块不做标定**，只把洞的尺寸如实给出去——
@@ -218,6 +227,12 @@ class PlanOpening(_FloorplanModel):
     """这个洞两侧的房间名。判洞时本来就要看两侧属谁（"两边都是同一间"才判得出那不是门），
     结果一直没往外给——而"厨房和餐厅之间是通的"这类说明，根据就在这儿。
     外墙那一侧、以及没归着的那一侧不进列表，所以外墙上的洞通常只有一个名字。"""
+    kind: OpeningKind = "unknown"
+    """洞口类型，见 :data:`OpeningKind`。默认 `unknown`：没跑过类型推断的老产物读进来
+    就是"不知道"。"""
+    kind_evidence: str = ""
+    """给出 `kind` 的依据（哪样证据、量到多少）；`unknown` 时写的是为什么推不出。
+    给人读的，不进规则。"""
 
 
 class RoomOutline(_FloorplanModel):
@@ -256,6 +271,9 @@ class FloorplanGeometry(_FloorplanModel):
     同一个数，所以**光有比例画不出正确形状**——不知道原图多宽多高，一张长方形的户型会被画成
     正方形。它不是"顺带记一下原图多大"，是消费方复原比例的必要条件，因此放在几何产物里面、
     与比例同进同出，而不是搁在外层的图片信息里（那一块是给人看的出处，不是坐标系）。
+
+    `opening_kind_coverage_ratio` 是洞口类型那一步的自证数：给出了非 `unknown` 类型的洞占全部洞的
+    比例。它不设门槛（阈值有数据才定，今天只有两张图），只把"有多少洞没推出来"摆在明处。
     """
 
     frame_width_px: int = 0
@@ -266,6 +284,7 @@ class FloorplanGeometry(_FloorplanModel):
     openings: list[PlanOpening] = Field(default_factory=list)
     rooms: list[RoomOutline] = Field(default_factory=list)
     cell_coverage_ratio: float = 0.0
+    opening_kind_coverage_ratio: float = 0.0
 
 
 class PlanFact(_FloorplanModel):

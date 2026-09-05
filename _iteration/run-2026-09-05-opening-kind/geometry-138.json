@@ -1,0 +1,2631 @@
+{
+  "image": {
+    "path": "/Users/baitianxing/Desktop/test.png",
+    "sha256": "dfa2b010f28d01d92febed78df01a35d8749f9d513a054975b9082c38a26606a",
+    "bytes": 1578099
+  },
+  "modelCallCount": 0,
+  "survey": {
+    "northPointsTo": null,
+    "rooms": [
+      {
+        "name": "主卧",
+        "box": [
+          100.0,
+          570.0,
+          348.0,
+          850.0
+        ]
+      },
+      {
+        "name": "次卧",
+        "box": [
+          175.0,
+          56.0,
+          388.0,
+          262.0
+        ]
+      },
+      {
+        "name": "客厅",
+        "box": [
+          360.0,
+          560.0,
+          640.0,
+          810.0
+        ]
+      },
+      {
+        "name": "厨房",
+        "box": [
+          390.0,
+          56.0,
+          575.0,
+          270.0
+        ]
+      },
+      {
+        "name": "卫生间",
+        "box": [
+          175.0,
+          265.0,
+          310.0,
+          415.0
+        ]
+      },
+      {
+        "name": "卫生间",
+        "box": [
+          100.0,
+          420.0,
+          240.0,
+          565.0
+        ]
+      },
+      {
+        "name": "阳台",
+        "box": [
+          360.0,
+          825.0,
+          640.0,
+          940.0
+        ]
+      },
+      {
+        "name": "书房",
+        "box": [
+          575.0,
+          56.0,
+          725.0,
+          270.0
+        ]
+      },
+      {
+        "name": "次卧",
+        "box": [
+          725.0,
+          475.0,
+          855.0,
+          845.0
+        ]
+      }
+    ]
+  },
+  "geometry": {
+    "frameWidthPx": 1254,
+    "frameHeightPx": 1254,
+    "planBox": [
+      0.08771929824561403,
+      0.04066985645933014,
+      0.8708133971291866,
+      0.9473684210526315
+    ],
+    "outline": [
+      {
+        "axis": "vertical",
+        "positionRatio": 0.09449760765550239,
+        "startRatio": 0.41068580542264754,
+        "endRatio": 0.8644338118022329,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.12799043062200957,
+        "startRatio": 0.8604465709728868,
+        "endRatio": 0.8644338118022329,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.17025518341307816,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.3492822966507177,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.17025518341307816,
+        "startRatio": 0.39792663476874,
+        "endRatio": 0.4098883572567783,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.17424242424242425,
+        "startRatio": 0.35007974481658694,
+        "endRatio": 0.39712918660287083,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.20374800637958532,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.044657097288676235,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3405103668261563,
+        "startRatio": 0.8604465709728868,
+        "endRatio": 0.8644338118022329,
+        "thicknessRatio": 0.043859649122807015,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.35526315789473684,
+        "startRatio": 0.8660287081339713,
+        "endRatio": 0.9465709728867624,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.36004784688995217,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.044657097288676235,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3927432216905901,
+        "startRatio": 0.9441786283891547,
+        "endRatio": 0.9465709728867624,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.4246411483253589,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.044657097288676235,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.5466507177033493,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.044657097288676235,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.5793460925039873,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.044657097288676235,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6379585326953748,
+        "startRatio": 0.9441786283891547,
+        "endRatio": 0.9473684210526315,
+        "thicknessRatio": 0.03269537480063796,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6475279106858054,
+        "startRatio": 0.8660287081339713,
+        "endRatio": 0.9465709728867624,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6618819776714514,
+        "startRatio": 0.8604465709728868,
+        "endRatio": 0.8644338118022329,
+        "thicknessRatio": 0.04226475279106858,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7053429027113237,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.044657097288676235,
+        "thicknessRatio": 0.04146730462519936,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7157097288676236,
+        "startRatio": 0.34768740031897927,
+        "endRatio": 0.4768740031897927,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7053429027113237,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.0430622009569378,
+        "thicknessRatio": 0.04146730462519936,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7188995215311005,
+        "startRatio": 0.3437001594896332,
+        "endRatio": 0.34688995215311,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7192982456140351,
+        "startRatio": 0.043859649122807015,
+        "endRatio": 0.34290271132376393,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.8161881977671451,
+        "startRatio": 0.47129186602870815,
+        "endRatio": 0.4768740031897927,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.8480861244019139,
+        "startRatio": 0.8604465709728868,
+        "endRatio": 0.8644338118022329,
+        "thicknessRatio": 0.044657097288676235,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.8636363636363636,
+        "startRatio": 0.4704944178628389,
+        "endRatio": 0.7081339712918661,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.8636363636363636,
+        "startRatio": 0.7320574162679426,
+        "endRatio": 0.8644338118022329,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.8640350877192983,
+        "startRatio": 0.7089314194577353,
+        "endRatio": 0.7312599681020734,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.0474481658692185,
+        "startRatio": 0.36363636363636365,
+        "endRatio": 0.430622009569378,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.0474481658692185,
+        "startRatio": 0.5661881977671451,
+        "endRatio": 0.5829346092503987,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04824561403508772,
+        "startRatio": 0.1634768740031898,
+        "endRatio": 0.21052631578947367,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04824561403508772,
+        "startRatio": 0.3532695374800638,
+        "endRatio": 0.3628389154704944,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.539872408293461,
+        "endRatio": 0.5653907496012759,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.583732057416268,
+        "endRatio": 0.5861244019138756,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04824561403508772,
+        "startRatio": 0.6850079744816587,
+        "endRatio": 0.7256778309409888,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.05223285486443381,
+        "startRatio": 0.2113237639553429,
+        "endRatio": 0.3524720893141946,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.05223285486443381,
+        "startRatio": 0.43221690590111644,
+        "endRatio": 0.5390749601275917,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.05223285486443381,
+        "startRatio": 0.5869218500797448,
+        "endRatio": 0.6842105263157895,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.3401116427432217,
+        "startRatio": 0.7200956937799043,
+        "endRatio": 0.7256778309409888,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.34250398724082937,
+        "startRatio": 0.1634768740031898,
+        "endRatio": 0.16666666666666666,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.41108452950558216,
+        "startRatio": 0.1634768740031898,
+        "endRatio": 0.16666666666666666,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.41746411483253587,
+        "startRatio": 0.08771929824561403,
+        "endRatio": 0.10606060606060606,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.41746411483253587,
+        "startRatio": 0.15390749601275916,
+        "endRatio": 0.16267942583732056,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.4182615629984051,
+        "startRatio": 0.10685805422647528,
+        "endRatio": 0.15311004784688995,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.47767145135566186,
+        "startRatio": 0.810207336523126,
+        "endRatio": 0.8700159489633174,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.48444976076555024,
+        "startRatio": 0.7200956937799043,
+        "endRatio": 0.7328548644338118,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.4852472089314195,
+        "startRatio": 0.733652312599681,
+        "endRatio": 0.8094098883572568,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8528708133971292,
+        "startRatio": 0.13556618819776714,
+        "endRatio": 0.3181818181818182,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8528708133971292,
+        "startRatio": 0.6834130781499203,
+        "endRatio": 0.8253588516746412,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8576555023923444,
+        "startRatio": 0.08771929824561403,
+        "endRatio": 0.13476874003189793,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8576555023923444,
+        "startRatio": 0.3189792663476874,
+        "endRatio": 0.3452950558213716,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8576555023923444,
+        "startRatio": 0.6555023923444976,
+        "endRatio": 0.682615629984051,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8576555023923444,
+        "startRatio": 0.8261562998405104,
+        "endRatio": 0.8700159489633174,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8580542264752791,
+        "startRatio": 0.34609250398724084,
+        "endRatio": 0.34768740031897927,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.9366028708133971,
+        "startRatio": 0.4003189792663477,
+        "endRatio": 0.6212121212121212,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.939792663476874,
+        "startRatio": 0.3484848484848485,
+        "endRatio": 0.3508771929824561,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.939792663476874,
+        "startRatio": 0.6523125996810207,
+        "endRatio": 0.6539074960127592,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.9409888357256778,
+        "startRatio": 0.35167464114832536,
+        "endRatio": 0.39872408293460926,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.9409888357256778,
+        "startRatio": 0.6220095693779905,
+        "endRatio": 0.631578947368421,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.9405901116427432,
+        "startRatio": 0.6339712918660287,
+        "endRatio": 0.6515151515151515,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      }
+    ],
+    "walls": [
+      {
+        "axis": "vertical",
+        "positionRatio": 0.09409888357256778,
+        "startRatio": 0.41068580542264754,
+        "endRatio": 0.5645933014354066,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.41068580542264754,
+            "endRatio": 0.5645933014354066,
+            "faceLowRatio": 0.08732057416267942,
+            "faceHighRatio": 0.10247208931419458
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.09409888357256778,
+        "startRatio": 0.5733652312599681,
+        "endRatio": 0.8500797448165869,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.5733652312599681,
+            "endRatio": 0.8500797448165869,
+            "faceLowRatio": 0.08732057416267942,
+            "faceHighRatio": 0.10167464114832536
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.16985645933014354,
+        "startRatio": 0.05582137161084529,
+        "endRatio": 0.26156299840510366,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.05582137161084529,
+            "endRatio": 0.26156299840510366,
+            "faceLowRatio": 0.16307814992025518,
+            "faceHighRatio": 0.1774322169059011
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.16985645933014354,
+        "startRatio": 0.2679425837320574,
+        "endRatio": 0.3492822966507177,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.2679425837320574,
+            "endRatio": 0.3492822966507177,
+            "faceLowRatio": 0.16307814992025518,
+            "faceHighRatio": 0.1774322169059011
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.16985645933014354,
+        "startRatio": 0.39792663476874,
+        "endRatio": 0.4098883572567783,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.39792663476874,
+            "endRatio": 0.4098883572567783,
+            "faceLowRatio": 0.16307814992025518,
+            "faceHighRatio": 0.1774322169059011
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.23604465709728867,
+        "startRatio": 0.42503987240829344,
+        "endRatio": 0.430622009569378,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.42503987240829344,
+            "endRatio": 0.430622009569378,
+            "faceLowRatio": 0.2324561403508772,
+            "faceHighRatio": 0.24681020733652312
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.23604465709728867,
+        "startRatio": 0.44577352472089316,
+        "endRatio": 0.49681020733652315,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.44577352472089316,
+            "endRatio": 0.49681020733652315,
+            "faceLowRatio": 0.2324561403508772,
+            "faceHighRatio": 0.23963317384370017
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.23604465709728867,
+        "startRatio": 0.5566188197767146,
+        "endRatio": 0.5645933014354066,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.5566188197767146,
+            "endRatio": 0.5645933014354066,
+            "faceLowRatio": 0.2324561403508772,
+            "faceHighRatio": 0.23963317384370017
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3094098883572568,
+        "startRatio": 0.2679425837320574,
+        "endRatio": 0.2743221690590112,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": [
+          {
+            "startRatio": 0.2679425837320574,
+            "endRatio": 0.2715311004784689,
+            "faceLowRatio": 0.30582137161084527,
+            "faceHighRatio": 0.32097288676236047
+          },
+          {
+            "startRatio": 0.2715311004784689,
+            "endRatio": 0.2743221690590112,
+            "faceLowRatio": 0.30582137161084527,
+            "faceHighRatio": 0.3129984051036683
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3094098883572568,
+        "startRatio": 0.33253588516746413,
+        "endRatio": 0.4098883572567783,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": [
+          {
+            "startRatio": 0.33253588516746413,
+            "endRatio": 0.4098883572567783,
+            "faceLowRatio": 0.30582137161084527,
+            "faceHighRatio": 0.31379585326953746
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3094098883572568,
+        "startRatio": 0.4178628389154705,
+        "endRatio": 0.430622009569378,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": [
+          {
+            "startRatio": 0.4178628389154705,
+            "endRatio": 0.430622009569378,
+            "faceLowRatio": 0.30582137161084527,
+            "faceHighRatio": 0.31379585326953746
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3548644338118022,
+        "startRatio": 0.44577352472089316,
+        "endRatio": 0.45055821371610844,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.44577352472089316,
+            "endRatio": 0.45055821371610844,
+            "faceLowRatio": 0.3480861244019139,
+            "faceHighRatio": 0.3624401913875598
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3548644338118022,
+        "startRatio": 0.46570972886762363,
+        "endRatio": 0.49760765550239233,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.46570972886762363,
+            "endRatio": 0.49760765550239233,
+            "faceLowRatio": 0.3480861244019139,
+            "faceHighRatio": 0.3624401913875598
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3548644338118022,
+        "startRatio": 0.5614035087719298,
+        "endRatio": 0.810207336523126,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.5614035087719298,
+            "endRatio": 0.810207336523126,
+            "faceLowRatio": 0.3480861244019139,
+            "faceHighRatio": 0.3624401913875598
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3548644338118022,
+        "startRatio": 0.8261562998405104,
+        "endRatio": 0.9338118022328549,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.8261562998405104,
+            "endRatio": 0.9338118022328549,
+            "faceLowRatio": 0.3480861244019139,
+            "faceHighRatio": 0.3624401913875598
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3548644338118022,
+        "startRatio": 0.9473684210526315,
+        "endRatio": 0.9473684210526315,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3963317384370016,
+        "startRatio": 0.05582137161084529,
+        "endRatio": 0.2607655502392344,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": [
+          {
+            "startRatio": 0.05582137161084529,
+            "endRatio": 0.09529505582137161,
+            "faceLowRatio": 0.38636363636363635,
+            "faceHighRatio": 0.4134768740031898
+          },
+          {
+            "startRatio": 0.09529505582137161,
+            "endRatio": 0.25637958532695376,
+            "faceLowRatio": 0.38636363636363635,
+            "faceHighRatio": 0.39992025518341306
+          },
+          {
+            "startRatio": 0.25637958532695376,
+            "endRatio": 0.2607655502392344,
+            "faceLowRatio": 0.38636363636363635,
+            "faceHighRatio": 0.4310207336523126
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3963317384370016,
+        "startRatio": 0.3444976076555024,
+        "endRatio": 0.35167464114832536,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3963317384370016,
+        "startRatio": 0.9473684210526315,
+        "endRatio": 0.9473684210526315,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.41148325358851673,
+        "startRatio": 0.05582137161084529,
+        "endRatio": 0.094896331738437,
+        "thicknessRatio": 0.011961722488038277,
+        "bands": [
+          {
+            "startRatio": 0.05582137161084529,
+            "endRatio": 0.094896331738437,
+            "faceLowRatio": 0.38636363636363635,
+            "faceHighRatio": 0.4134768740031898
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.41148325358851673,
+        "startRatio": 0.2567783094098884,
+        "endRatio": 0.2607655502392344,
+        "thicknessRatio": 0.011961722488038277,
+        "bands": [
+          {
+            "startRatio": 0.2567783094098884,
+            "endRatio": 0.2607655502392344,
+            "faceLowRatio": 0.38636363636363635,
+            "faceHighRatio": 0.4310207336523126
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.41148325358851673,
+        "startRatio": 0.3444976076555024,
+        "endRatio": 0.45055821371610844,
+        "thicknessRatio": 0.011961722488038277,
+        "bands": [
+          {
+            "startRatio": 0.3444976076555024,
+            "endRatio": 0.45055821371610844,
+            "faceLowRatio": 0.4047049441786284,
+            "faceHighRatio": 0.4166666666666667
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.41148325358851673,
+        "startRatio": 0.46570972886762363,
+        "endRatio": 0.49362041467304624,
+        "thicknessRatio": 0.011961722488038277,
+        "bands": [
+          {
+            "startRatio": 0.46570972886762363,
+            "endRatio": 0.49362041467304624,
+            "faceLowRatio": 0.4094896331738437,
+            "faceHighRatio": 0.4166666666666667
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.5685805422647527,
+        "startRatio": 0.04066985645933014,
+        "endRatio": 0.04066985645933014,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.5685805422647527,
+        "startRatio": 0.05502392344497608,
+        "endRatio": 0.26395534290271133,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": [
+          {
+            "startRatio": 0.05502392344497608,
+            "endRatio": 0.26395534290271133,
+            "faceLowRatio": 0.5649920255183413,
+            "faceHighRatio": 0.5729665071770335
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6291866028708134,
+        "startRatio": 0.6307814992025519,
+        "endRatio": 0.7328548644338118,
+        "thicknessRatio": 0.006379585326953748,
+        "bands": [
+          {
+            "startRatio": 0.6307814992025519,
+            "endRatio": 0.6949760765550239,
+            "faceLowRatio": 0.6263955342902712,
+            "faceHighRatio": 0.6327751196172249
+          },
+          {
+            "startRatio": 0.6949760765550239,
+            "endRatio": 0.7021531100478469,
+            "faceLowRatio": 0.6287878787878788,
+            "faceHighRatio": 0.6327751196172249
+          },
+          {
+            "startRatio": 0.7021531100478469,
+            "endRatio": 0.7085326953748007,
+            "faceLowRatio": 0.6263955342902712,
+            "faceHighRatio": 0.6327751196172249
+          },
+          {
+            "startRatio": 0.7085326953748007,
+            "endRatio": 0.7133173843700159,
+            "faceLowRatio": 0.6287878787878788,
+            "faceHighRatio": 0.6327751196172249
+          },
+          {
+            "startRatio": 0.7133173843700159,
+            "endRatio": 0.7328548644338118,
+            "faceLowRatio": 0.6263955342902712,
+            "faceHighRatio": 0.6327751196172249
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6291866028708134,
+        "startRatio": 0.9346092503987241,
+        "endRatio": 0.9473684210526315,
+        "thicknessRatio": 0.006379585326953748,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6491228070175439,
+        "startRatio": 0.34609250398724084,
+        "endRatio": 0.4130781499202552,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.34609250398724084,
+            "endRatio": 0.4130781499202552,
+            "faceLowRatio": 0.6447368421052632,
+            "faceHighRatio": 0.6598883572567783
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6491228070175439,
+        "startRatio": 0.4194577352472089,
+        "endRatio": 0.4768740031897927,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.4194577352472089,
+            "endRatio": 0.4768740031897927,
+            "faceLowRatio": 0.6447368421052632,
+            "faceHighRatio": 0.6598883572567783
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6491228070175439,
+        "startRatio": 0.5789473684210527,
+        "endRatio": 0.810207336523126,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.5789473684210527,
+            "endRatio": 0.810207336523126,
+            "faceLowRatio": 0.6399521531100478,
+            "faceHighRatio": 0.6543062200956937
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.6491228070175439,
+        "startRatio": 0.8261562998405104,
+        "endRatio": 0.9473684210526315,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.8261562998405104,
+            "endRatio": 0.9473684210526315,
+            "faceLowRatio": 0.6407496012759171,
+            "faceHighRatio": 0.6543062200956937
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7169059011164274,
+        "startRatio": 0.04146730462519936,
+        "endRatio": 0.26395534290271133,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.04146730462519936,
+            "endRatio": 0.26395534290271133,
+            "faceLowRatio": 0.7117224880382775,
+            "faceHighRatio": 0.7268740031897927
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7169059011164274,
+        "startRatio": 0.2711323763955343,
+        "endRatio": 0.33014354066985646,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.2711323763955343,
+            "endRatio": 0.33014354066985646,
+            "faceLowRatio": 0.7117224880382775,
+            "faceHighRatio": 0.7268740031897927
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7169059011164274,
+        "startRatio": 0.34609250398724084,
+        "endRatio": 0.36044657097288674,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.34609250398724084,
+            "endRatio": 0.36044657097288674,
+            "faceLowRatio": 0.7117224880382775,
+            "faceHighRatio": 0.7188995215311005
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7169059011164274,
+        "startRatio": 0.4043062200956938,
+        "endRatio": 0.4130781499202552,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": []
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7169059011164274,
+        "startRatio": 0.4194577352472089,
+        "endRatio": 0.4768740031897927,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.4194577352472089,
+            "endRatio": 0.4768740031897927,
+            "faceLowRatio": 0.7117224880382775,
+            "faceHighRatio": 0.7196969696969697
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.8636363636363636,
+        "startRatio": 0.48564593301435405,
+        "endRatio": 0.5789473684210527,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": [
+          {
+            "startRatio": 0.48564593301435405,
+            "endRatio": 0.5789473684210527,
+            "faceLowRatio": 0.8568580542264753,
+            "faceHighRatio": 0.870414673046252
+          }
+        ]
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.8636363636363636,
+        "startRatio": 0.5901116427432217,
+        "endRatio": 0.8644338118022329,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": [
+          {
+            "startRatio": 0.5901116427432217,
+            "endRatio": 0.8644338118022329,
+            "faceLowRatio": 0.8568580542264753,
+            "faceHighRatio": 0.870414673046252
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.17783094098883573,
+        "endRatio": 0.21052631578947367,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.17783094098883573,
+            "endRatio": 0.21052631578947367,
+            "faceLowRatio": 0.041068580542264754,
+            "faceHighRatio": 0.055422647527910686
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.3532695374800638,
+        "endRatio": 0.38596491228070173,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.3532695374800638,
+            "endRatio": 0.38596491228070173,
+            "faceLowRatio": 0.040271132376395534,
+            "faceHighRatio": 0.055422647527910686
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.4138755980861244,
+        "endRatio": 0.4314194577352472,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.4138755980861244,
+            "endRatio": 0.4314194577352472,
+            "faceLowRatio": 0.040271132376395534,
+            "faceHighRatio": 0.054625199362041466
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.539872408293461,
+        "endRatio": 0.5645933014354066,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.539872408293461,
+            "endRatio": 0.5645933014354066,
+            "faceLowRatio": 0.041068580542264754,
+            "faceHighRatio": 0.054625199362041466
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.5733652312599681,
+        "endRatio": 0.5861244019138756,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.5733652312599681,
+            "endRatio": 0.5861244019138756,
+            "faceLowRatio": 0.040271132376395534,
+            "faceHighRatio": 0.054625199362041466
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.6850079744816587,
+        "endRatio": 0.7113237639553429,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.6850079744816587,
+            "endRatio": 0.7113237639553429,
+            "faceLowRatio": 0.041068580542264754,
+            "faceHighRatio": 0.055422647527910686
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.17783094098883573,
+        "endRatio": 0.32057416267942584,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.17783094098883573,
+            "endRatio": 0.30980861244019137,
+            "faceLowRatio": 0.26116427432216904,
+            "faceHighRatio": 0.2675438596491228
+          },
+          {
+            "startRatio": 0.30980861244019137,
+            "endRatio": 0.32057416267942584,
+            "faceLowRatio": 0.26116427432216904,
+            "faceHighRatio": 0.2715311004784689
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.3803827751196172,
+        "endRatio": 0.38596491228070173,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.3803827751196172,
+            "endRatio": 0.38596491228070173,
+            "faceLowRatio": 0.2619617224880383,
+            "faceHighRatio": 0.2715311004784689
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.4003189792663477,
+        "endRatio": 0.44657097288676234,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.4003189792663477,
+            "endRatio": 0.4310207336523126,
+            "faceLowRatio": 0.25637958532695376,
+            "faceHighRatio": 0.2715311004784689
+          },
+          {
+            "startRatio": 0.4310207336523126,
+            "endRatio": 0.44657097288676234,
+            "faceLowRatio": 0.26435406698564595,
+            "faceHighRatio": 0.2715311004784689
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.511164274322169,
+        "endRatio": 0.5645933014354066,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.511164274322169,
+            "endRatio": 0.5645933014354066,
+            "faceLowRatio": 0.26435406698564595,
+            "faceHighRatio": 0.2715311004784689
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.5733652312599681,
+        "endRatio": 0.5773524720893142,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.5733652312599681,
+            "endRatio": 0.5773524720893142,
+            "faceLowRatio": 0.26435406698564595,
+            "faceHighRatio": 0.2715311004784689
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.6395534290271132,
+        "endRatio": 0.7113237639553429,
+        "thicknessRatio": 0.007177033492822967,
+        "bands": [
+          {
+            "startRatio": 0.6395534290271132,
+            "endRatio": 0.7113237639553429,
+            "faceLowRatio": 0.26435406698564595,
+            "faceHighRatio": 0.2715311004784689
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.33811802232854865,
+        "startRatio": 0.6602870813397129,
+        "endRatio": 0.7113237639553429,
+        "thicknessRatio": 0.01594896331738437,
+        "bands": [
+          {
+            "startRatio": 0.6602870813397129,
+            "endRatio": 0.7113237639553429,
+            "faceLowRatio": 0.3305422647527911,
+            "faceHighRatio": 0.34649122807017546
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.34768740031897927,
+        "startRatio": 0.3827751196172249,
+        "endRatio": 0.4043062200956938,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": []
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.34768740031897927,
+        "startRatio": 0.6602870813397129,
+        "endRatio": 0.7113237639553429,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": [
+          {
+            "startRatio": 0.6602870813397129,
+            "endRatio": 0.7113237639553429,
+            "faceLowRatio": 0.3305422647527911,
+            "faceHighRatio": 0.34649122807017546
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.4138755980861244,
+        "startRatio": 0.10287081339712918,
+        "endRatio": 0.10606060606060606,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": [
+          {
+            "startRatio": 0.10287081339712918,
+            "endRatio": 0.10606060606060606,
+            "faceLowRatio": 0.4102870813397129,
+            "faceHighRatio": 0.4246411483253589
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.4138755980861244,
+        "startRatio": 0.15390749601275916,
+        "endRatio": 0.23205741626794257,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": [
+          {
+            "startRatio": 0.15390749601275916,
+            "endRatio": 0.23205741626794257,
+            "faceLowRatio": 0.4102870813397129,
+            "faceHighRatio": 0.4246411483253589
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.4138755980861244,
+        "startRatio": 0.24003189792663476,
+        "endRatio": 0.3054226475279107,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": [
+          {
+            "startRatio": 0.24003189792663476,
+            "endRatio": 0.24681020733652312,
+            "faceLowRatio": 0.4102870813397129,
+            "faceHighRatio": 0.44537480063795853
+          },
+          {
+            "startRatio": 0.24681020733652312,
+            "endRatio": 0.3054226475279107,
+            "faceLowRatio": 0.4102870813397129,
+            "faceHighRatio": 0.41746411483253587
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.4138755980861244,
+        "startRatio": 0.6602870813397129,
+        "endRatio": 0.7113237639553429,
+        "thicknessRatio": 0.02711323763955343,
+        "bands": [
+          {
+            "startRatio": 0.6602870813397129,
+            "endRatio": 0.7113237639553429,
+            "faceLowRatio": 0.4134768740031898,
+            "faceHighRatio": 0.4190590111642743
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.43779904306220097,
+        "startRatio": 0.24003189792663476,
+        "endRatio": 0.3054226475279107,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.24003189792663476,
+            "endRatio": 0.24681020733652312,
+            "faceLowRatio": 0.4102870813397129,
+            "faceHighRatio": 0.44537480063795853
+          },
+          {
+            "startRatio": 0.24681020733652312,
+            "endRatio": 0.3054226475279107,
+            "faceLowRatio": 0.4310207336523126,
+            "faceHighRatio": 0.44537480063795853
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.43779904306220097,
+        "startRatio": 0.3141945773524721,
+        "endRatio": 0.34768740031897927,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.3141945773524721,
+            "endRatio": 0.34768740031897927,
+            "faceLowRatio": 0.4310207336523126,
+            "faceHighRatio": 0.44537480063795853
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.45773524720893144,
+        "startRatio": 0.3628389154704944,
+        "endRatio": 0.4043062200956938,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.3628389154704944,
+            "endRatio": 0.4043062200956938,
+            "faceLowRatio": 0.45095693779904306,
+            "faceHighRatio": 0.465311004784689
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.48086124401913877,
+        "startRatio": 0.6602870813397129,
+        "endRatio": 0.7113237639553429,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.6602870813397129,
+            "endRatio": 0.7113237639553429,
+            "faceLowRatio": 0.4772727272727273,
+            "faceHighRatio": 0.4916267942583732
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.48086124401913877,
+        "startRatio": 0.7200956937799043,
+        "endRatio": 0.7328548644338118,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.7200956937799043,
+            "endRatio": 0.7328548644338118,
+            "faceLowRatio": 0.4772727272727273,
+            "faceHighRatio": 0.4916267942583732
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.48086124401913877,
+        "startRatio": 0.8094098883572568,
+        "endRatio": 0.8564593301435407,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.8094098883572568,
+            "endRatio": 0.8098086124401914,
+            "faceLowRatio": 0.4780701754385965,
+            "faceHighRatio": 0.4852472089314195
+          },
+          {
+            "startRatio": 0.8098086124401914,
+            "endRatio": 0.8564593301435407,
+            "faceLowRatio": 0.4700956937799043,
+            "faceHighRatio": 0.4852472089314195
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.5685805422647527,
+        "startRatio": 0.10287081339712918,
+        "endRatio": 0.23923444976076555,
+        "thicknessRatio": 0.007974481658692184,
+        "bands": [
+          {
+            "startRatio": 0.10287081339712918,
+            "endRatio": 0.23923444976076555,
+            "faceLowRatio": 0.5649920255183413,
+            "faceHighRatio": 0.5729665071770335
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.5845295055821371,
+        "startRatio": 0.6547049441786283,
+        "endRatio": 0.6682615629984051,
+        "thicknessRatio": 0.011164274322169059,
+        "bands": [
+          {
+            "startRatio": 0.6547049441786283,
+            "endRatio": 0.6682615629984051,
+            "faceLowRatio": 0.578548644338118,
+            "faceHighRatio": 0.5897129186602871
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.5845295055821371,
+        "startRatio": 0.722488038277512,
+        "endRatio": 0.8564593301435407,
+        "thicknessRatio": 0.011164274322169059,
+        "bands": [
+          {
+            "startRatio": 0.722488038277512,
+            "endRatio": 0.8564593301435407,
+            "faceLowRatio": 0.5793460925039873,
+            "faceHighRatio": 0.5897129186602871
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8181818181818182,
+        "startRatio": 0.3628389154704944,
+        "endRatio": 0.4138755980861244,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.3628389154704944,
+            "endRatio": 0.4138755980861244,
+            "faceLowRatio": 0.8106060606060606,
+            "faceHighRatio": 0.8257575757575758
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8181818181818182,
+        "startRatio": 0.6044657097288676,
+        "endRatio": 0.6395534290271132,
+        "thicknessRatio": 0.015151515151515152,
+        "bands": [
+          {
+            "startRatio": 0.6044657097288676,
+            "endRatio": 0.6395534290271132,
+            "faceLowRatio": 0.8106060606060606,
+            "faceHighRatio": 0.8257575757575758
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8572567783094099,
+        "startRatio": 0.10207336523125997,
+        "endRatio": 0.13476874003189793,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.10207336523125997,
+            "endRatio": 0.13476874003189793,
+            "faceLowRatio": 0.8504784688995215,
+            "faceHighRatio": 0.8648325358851675
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8572567783094099,
+        "startRatio": 0.3189792663476874,
+        "endRatio": 0.34768740031897927,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.3189792663476874,
+            "endRatio": 0.34768740031897927,
+            "faceLowRatio": 0.8504784688995215,
+            "faceHighRatio": 0.8648325358851675
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8572567783094099,
+        "startRatio": 0.6547049441786283,
+        "endRatio": 0.682615629984051,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.6547049441786283,
+            "endRatio": 0.682615629984051,
+            "faceLowRatio": 0.8504784688995215,
+            "faceHighRatio": 0.8648325358851675
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8572567783094099,
+        "startRatio": 0.8261562998405104,
+        "endRatio": 0.8564593301435407,
+        "thicknessRatio": 0.014354066985645933,
+        "bands": [
+          {
+            "startRatio": 0.8261562998405104,
+            "endRatio": 0.8564593301435407,
+            "faceLowRatio": 0.8504784688995215,
+            "faceHighRatio": 0.8648325358851675
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.9409888357256778,
+        "startRatio": 0.3628389154704944,
+        "endRatio": 0.39952153110047844,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": [
+          {
+            "startRatio": 0.3628389154704944,
+            "endRatio": 0.39952153110047844,
+            "faceLowRatio": 0.9342105263157895,
+            "faceHighRatio": 0.9477671451355661
+          }
+        ]
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.9409888357256778,
+        "startRatio": 0.6220095693779905,
+        "endRatio": 0.6403508771929824,
+        "thicknessRatio": 0.013556618819776715,
+        "bands": [
+          {
+            "startRatio": 0.6220095693779905,
+            "endRatio": 0.6403508771929824,
+            "faceLowRatio": 0.9342105263157895,
+            "faceHighRatio": 0.9477671451355661
+          }
+        ]
+      }
+    ],
+    "openings": [
+      {
+        "axis": "vertical",
+        "positionRatio": 0.16985645933014354,
+        "startRatio": 0.35007974481658694,
+        "endRatio": 0.39712918660287083,
+        "isOnOuterWall": true,
+        "connects": [
+          "卫生间"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 4 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.23604465709728867,
+        "startRatio": 0.49760765550239233,
+        "endRatio": 0.5558213716108453,
+        "isOnOuterWall": false,
+        "connects": [
+          "卫生间",
+          "主卧"
+        ],
+        "kind": "door",
+        "kindEvidence": "门弧：16/16 个采样角压到孤立细线，半径≈0.85 洞宽，铰链在终点、朝低位面一侧摆；洞在内墙上"
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.3548644338118022,
+        "startRatio": 0.4984051036682616,
+        "endRatio": 0.5606060606060606,
+        "isOnOuterWall": false,
+        "connects": [
+          "主卧",
+          "客厅"
+        ],
+        "kind": "door",
+        "kindEvidence": "门弧：16/16 个采样角压到孤立细线，半径≈0.85 洞宽，铰链在起点、朝低位面一侧摆；洞在内墙上"
+      },
+      {
+        "axis": "vertical",
+        "positionRatio": 0.7169059011164274,
+        "startRatio": 0.361244019138756,
+        "endRatio": 0.40350877192982454,
+        "isOnOuterWall": true,
+        "connects": [],
+        "kind": "unknown",
+        "kindEvidence": "两侧都不属于任何房间（管井/设备位一类），不是户内的门窗"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.2113237639553429,
+        "endRatio": 0.3524720893141946,
+        "isOnOuterWall": true,
+        "connects": [
+          "次卧"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 4 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.43221690590111644,
+        "endRatio": 0.5390749601275917,
+        "isOnOuterWall": true,
+        "connects": [
+          "厨房"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 5 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.04784688995215311,
+        "startRatio": 0.5869218500797448,
+        "endRatio": 0.6842105263157895,
+        "isOnOuterWall": true,
+        "connects": [
+          "书房"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 4 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.32137161084529503,
+        "endRatio": 0.379585326953748,
+        "isOnOuterWall": false,
+        "connects": [
+          "次卧",
+          "卫生间"
+        ],
+        "kind": "door",
+        "kindEvidence": "门弧：15/16 个采样角压到孤立细线，半径≈0.86 洞宽，铰链在终点、朝低位面一侧摆；洞在内墙上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.26555023923444976,
+        "startRatio": 0.4473684210526316,
+        "endRatio": 0.5103668261562998,
+        "isOnOuterWall": false,
+        "connects": [
+          "厨房",
+          "卫生间"
+        ],
+        "kind": "door",
+        "kindEvidence": "跨洞平行线：横向剖面 2 条暗线、无门弧；洞在内墙上——推拉门画法"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.4138755980861244,
+        "startRatio": 0.10685805422647528,
+        "endRatio": 0.15311004784688995,
+        "isOnOuterWall": true,
+        "connects": [
+          "卫生间"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 4 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.48086124401913877,
+        "startRatio": 0.733652312599681,
+        "endRatio": 0.8086124401913876,
+        "isOnOuterWall": true,
+        "connects": [
+          "次卧"
+        ],
+        "kind": "entry-door",
+        "kindEvidence": "门弧：16/16 个采样角压到孤立细线，半径≈0.86 洞宽，铰链在起点、朝低位面一侧摆；洞在外轮廓上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.5845295055821371,
+        "startRatio": 0.6690590111642744,
+        "endRatio": 0.7216905901116427,
+        "isOnOuterWall": false,
+        "connects": [
+          "客厅",
+          "次卧"
+        ],
+        "kind": "door",
+        "kindEvidence": "门弧：14/16 个采样角压到孤立细线，半径≈0.91 洞宽，铰链在起点、朝高位面一侧摆；洞在内墙上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8181818181818182,
+        "startRatio": 0.41467304625199364,
+        "endRatio": 0.6036682615629984,
+        "isOnOuterWall": false,
+        "connects": [
+          "客厅",
+          "阳台"
+        ],
+        "kind": "door",
+        "kindEvidence": "跨洞平行线：横向剖面 3 条暗线、无门弧；洞在内墙上——推拉门画法"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8572567783094099,
+        "startRatio": 0.13556618819776714,
+        "endRatio": 0.3181818181818182,
+        "isOnOuterWall": true,
+        "connects": [
+          "主卧"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 4 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.8572567783094099,
+        "startRatio": 0.6834130781499203,
+        "endRatio": 0.8253588516746412,
+        "isOnOuterWall": true,
+        "connects": [
+          "次卧"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 4 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      },
+      {
+        "axis": "horizontal",
+        "positionRatio": 0.9409888357256778,
+        "startRatio": 0.4003189792663477,
+        "endRatio": 0.6212121212121212,
+        "isOnOuterWall": true,
+        "connects": [
+          "阳台"
+        ],
+        "kind": "window",
+        "kindEvidence": "跨洞平行线：横向剖面 4 条暗线（凸显 ≥40）、无门弧；洞在外轮廓上"
+      }
+    ],
+    "rooms": [
+      {
+        "name": "客厅",
+        "boxes": [
+          [
+            0.3548644338118022,
+            0.45773524720893144,
+            0.3963317384370016,
+            0.48086124401913877
+          ],
+          [
+            0.3548644338118022,
+            0.48086124401913877,
+            0.3963317384370016,
+            0.5685805422647527
+          ],
+          [
+            0.3548644338118022,
+            0.5685805422647527,
+            0.3963317384370016,
+            0.5845295055821371
+          ],
+          [
+            0.3548644338118022,
+            0.5845295055821371,
+            0.3963317384370016,
+            0.8181818181818182
+          ],
+          [
+            0.3963317384370016,
+            0.45773524720893144,
+            0.41148325358851673,
+            0.48086124401913877
+          ],
+          [
+            0.3963317384370016,
+            0.48086124401913877,
+            0.41148325358851673,
+            0.5685805422647527
+          ],
+          [
+            0.3963317384370016,
+            0.5685805422647527,
+            0.41148325358851673,
+            0.5845295055821371
+          ],
+          [
+            0.3963317384370016,
+            0.5845295055821371,
+            0.41148325358851673,
+            0.8181818181818182
+          ],
+          [
+            0.41148325358851673,
+            0.33811802232854865,
+            0.5685805422647527,
+            0.34768740031897927
+          ],
+          [
+            0.41148325358851673,
+            0.34768740031897927,
+            0.5685805422647527,
+            0.4138755980861244
+          ],
+          [
+            0.41148325358851673,
+            0.4138755980861244,
+            0.5685805422647527,
+            0.43779904306220097
+          ],
+          [
+            0.41148325358851673,
+            0.43779904306220097,
+            0.5685805422647527,
+            0.45773524720893144
+          ],
+          [
+            0.41148325358851673,
+            0.45773524720893144,
+            0.5685805422647527,
+            0.48086124401913877
+          ],
+          [
+            0.41148325358851673,
+            0.48086124401913877,
+            0.5685805422647527,
+            0.5685805422647527
+          ],
+          [
+            0.41148325358851673,
+            0.5685805422647527,
+            0.5685805422647527,
+            0.5845295055821371
+          ],
+          [
+            0.41148325358851673,
+            0.5845295055821371,
+            0.5685805422647527,
+            0.8181818181818182
+          ],
+          [
+            0.5685805422647527,
+            0.34768740031897927,
+            0.6291866028708134,
+            0.4138755980861244
+          ],
+          [
+            0.5685805422647527,
+            0.4138755980861244,
+            0.6291866028708134,
+            0.43779904306220097
+          ],
+          [
+            0.5685805422647527,
+            0.43779904306220097,
+            0.6291866028708134,
+            0.45773524720893144
+          ],
+          [
+            0.5685805422647527,
+            0.45773524720893144,
+            0.6291866028708134,
+            0.48086124401913877
+          ],
+          [
+            0.5685805422647527,
+            0.48086124401913877,
+            0.6291866028708134,
+            0.5685805422647527
+          ],
+          [
+            0.5685805422647527,
+            0.5685805422647527,
+            0.6291866028708134,
+            0.5845295055821371
+          ],
+          [
+            0.5685805422647527,
+            0.5845295055821371,
+            0.6291866028708134,
+            0.8181818181818182
+          ],
+          [
+            0.6291866028708134,
+            0.33811802232854865,
+            0.6491228070175439,
+            0.34768740031897927
+          ],
+          [
+            0.6291866028708134,
+            0.34768740031897927,
+            0.6491228070175439,
+            0.4138755980861244
+          ],
+          [
+            0.6291866028708134,
+            0.4138755980861244,
+            0.6491228070175439,
+            0.43779904306220097
+          ],
+          [
+            0.6291866028708134,
+            0.43779904306220097,
+            0.6491228070175439,
+            0.45773524720893144
+          ],
+          [
+            0.6291866028708134,
+            0.45773524720893144,
+            0.6491228070175439,
+            0.48086124401913877
+          ],
+          [
+            0.6291866028708134,
+            0.48086124401913877,
+            0.6491228070175439,
+            0.5685805422647527
+          ],
+          [
+            0.6291866028708134,
+            0.5685805422647527,
+            0.6491228070175439,
+            0.5845295055821371
+          ],
+          [
+            0.6291866028708134,
+            0.5845295055821371,
+            0.6491228070175439,
+            0.8181818181818182
+          ],
+          [
+            0.6491228070175439,
+            0.48086124401913877,
+            0.7169059011164274,
+            0.5685805422647527
+          ],
+          [
+            0.6491228070175439,
+            0.5685805422647527,
+            0.7169059011164274,
+            0.5845295055821371
+          ]
+        ],
+        "areaRatio": 0.2538,
+        "centroid": [
+          0.5163301427202869,
+          0.5855121012163673
+        ]
+      },
+      {
+        "name": "次卧",
+        "boxes": [
+          [
+            0.16985645933014354,
+            0.04784688995215311,
+            0.23604465709728867,
+            0.26555023923444976
+          ],
+          [
+            0.23604465709728867,
+            0.04784688995215311,
+            0.3094098883572568,
+            0.26555023923444976
+          ],
+          [
+            0.3094098883572568,
+            0.04784688995215311,
+            0.3548644338118022,
+            0.26555023923444976
+          ],
+          [
+            0.3548644338118022,
+            0.04784688995215311,
+            0.3963317384370016,
+            0.26555023923444976
+          ],
+          [
+            0.6491228070175439,
+            0.5845295055821371,
+            0.7169059011164274,
+            0.8181818181818182
+          ],
+          [
+            0.6491228070175439,
+            0.8181818181818182,
+            0.7169059011164274,
+            0.8572567783094099
+          ],
+          [
+            0.7169059011164274,
+            0.48086124401913877,
+            0.8636363636363636,
+            0.5685805422647527
+          ],
+          [
+            0.7169059011164274,
+            0.5685805422647527,
+            0.8636363636363636,
+            0.5845295055821371
+          ],
+          [
+            0.7169059011164274,
+            0.5845295055821371,
+            0.8636363636363636,
+            0.8181818181818182
+          ],
+          [
+            0.7169059011164274,
+            0.8181818181818182,
+            0.8636363636363636,
+            0.8572567783094099
+          ]
+        ],
+        "areaRatio": 0.2215,
+        "centroid": [
+          0.5708841884310862,
+          0.471501440930506
+        ]
+      },
+      {
+        "name": "主卧",
+        "boxes": [
+          [
+            0.09409888357256778,
+            0.5685805422647527,
+            0.16985645933014354,
+            0.5845295055821371
+          ],
+          [
+            0.09409888357256778,
+            0.5845295055821371,
+            0.16985645933014354,
+            0.8181818181818182
+          ],
+          [
+            0.09409888357256778,
+            0.8181818181818182,
+            0.16985645933014354,
+            0.8572567783094099
+          ],
+          [
+            0.16985645933014354,
+            0.5685805422647527,
+            0.23604465709728867,
+            0.5845295055821371
+          ],
+          [
+            0.16985645933014354,
+            0.5845295055821371,
+            0.23604465709728867,
+            0.8181818181818182
+          ],
+          [
+            0.16985645933014354,
+            0.8181818181818182,
+            0.23604465709728867,
+            0.8572567783094099
+          ],
+          [
+            0.23604465709728867,
+            0.43779904306220097,
+            0.3094098883572568,
+            0.45773524720893144
+          ],
+          [
+            0.23604465709728867,
+            0.45773524720893144,
+            0.3094098883572568,
+            0.48086124401913877
+          ],
+          [
+            0.23604465709728867,
+            0.48086124401913877,
+            0.3094098883572568,
+            0.5685805422647527
+          ],
+          [
+            0.23604465709728867,
+            0.5685805422647527,
+            0.3094098883572568,
+            0.5845295055821371
+          ],
+          [
+            0.23604465709728867,
+            0.5845295055821371,
+            0.3094098883572568,
+            0.8181818181818182
+          ],
+          [
+            0.23604465709728867,
+            0.8181818181818182,
+            0.3094098883572568,
+            0.8572567783094099
+          ],
+          [
+            0.3094098883572568,
+            0.43779904306220097,
+            0.3548644338118022,
+            0.45773524720893144
+          ],
+          [
+            0.3094098883572568,
+            0.45773524720893144,
+            0.3548644338118022,
+            0.48086124401913877
+          ],
+          [
+            0.3094098883572568,
+            0.48086124401913877,
+            0.3548644338118022,
+            0.5685805422647527
+          ],
+          [
+            0.3094098883572568,
+            0.5685805422647527,
+            0.3548644338118022,
+            0.5845295055821371
+          ],
+          [
+            0.3094098883572568,
+            0.5845295055821371,
+            0.3548644338118022,
+            0.8181818181818182
+          ],
+          [
+            0.3094098883572568,
+            0.8181818181818182,
+            0.3548644338118022,
+            0.8572567783094099
+          ],
+          [
+            0.3548644338118022,
+            0.4138755980861244,
+            0.3963317384370016,
+            0.43779904306220097
+          ],
+          [
+            0.3548644338118022,
+            0.43779904306220097,
+            0.3963317384370016,
+            0.45773524720893144
+          ],
+          [
+            0.3963317384370016,
+            0.4138755980861244,
+            0.41148325358851673,
+            0.43779904306220097
+          ]
+        ],
+        "areaRatio": 0.1675,
+        "centroid": [
+          0.23999560269282716,
+          0.6713355446379027
+        ]
+      },
+      {
+        "name": "卫生间",
+        "boxes": [
+          [
+            0.09409888357256778,
+            0.4138755980861244,
+            0.16985645933014354,
+            0.43779904306220097
+          ],
+          [
+            0.09409888357256778,
+            0.43779904306220097,
+            0.16985645933014354,
+            0.45773524720893144
+          ],
+          [
+            0.09409888357256778,
+            0.45773524720893144,
+            0.16985645933014354,
+            0.48086124401913877
+          ],
+          [
+            0.09409888357256778,
+            0.48086124401913877,
+            0.16985645933014354,
+            0.5685805422647527
+          ],
+          [
+            0.16985645933014354,
+            0.26555023923444976,
+            0.23604465709728867,
+            0.33811802232854865
+          ],
+          [
+            0.16985645933014354,
+            0.33811802232854865,
+            0.23604465709728867,
+            0.34768740031897927
+          ],
+          [
+            0.16985645933014354,
+            0.34768740031897927,
+            0.23604465709728867,
+            0.4138755980861244
+          ],
+          [
+            0.16985645933014354,
+            0.4138755980861244,
+            0.23604465709728867,
+            0.43779904306220097
+          ],
+          [
+            0.16985645933014354,
+            0.43779904306220097,
+            0.23604465709728867,
+            0.45773524720893144
+          ],
+          [
+            0.16985645933014354,
+            0.45773524720893144,
+            0.23604465709728867,
+            0.48086124401913877
+          ],
+          [
+            0.16985645933014354,
+            0.48086124401913877,
+            0.23604465709728867,
+            0.5685805422647527
+          ],
+          [
+            0.23604465709728867,
+            0.26555023923444976,
+            0.3094098883572568,
+            0.33811802232854865
+          ],
+          [
+            0.23604465709728867,
+            0.33811802232854865,
+            0.3094098883572568,
+            0.34768740031897927
+          ],
+          [
+            0.23604465709728867,
+            0.34768740031897927,
+            0.3094098883572568,
+            0.4138755980861244
+          ],
+          [
+            0.23604465709728867,
+            0.4138755980861244,
+            0.3094098883572568,
+            0.43779904306220097
+          ],
+          [
+            0.3094098883572568,
+            0.26555023923444976,
+            0.3548644338118022,
+            0.33811802232854865
+          ],
+          [
+            0.3094098883572568,
+            0.33811802232854865,
+            0.3548644338118022,
+            0.34768740031897927
+          ],
+          [
+            0.3094098883572568,
+            0.34768740031897927,
+            0.3548644338118022,
+            0.4138755980861244
+          ],
+          [
+            0.3094098883572568,
+            0.4138755980861244,
+            0.3548644338118022,
+            0.43779904306220097
+          ],
+          [
+            0.3548644338118022,
+            0.26555023923444976,
+            0.3963317384370016,
+            0.33811802232854865
+          ],
+          [
+            0.3548644338118022,
+            0.33811802232854865,
+            0.3963317384370016,
+            0.34768740031897927
+          ],
+          [
+            0.3548644338118022,
+            0.34768740031897927,
+            0.3963317384370016,
+            0.4138755980861244
+          ],
+          [
+            0.3963317384370016,
+            0.26555023923444976,
+            0.41148325358851673,
+            0.33811802232854865
+          ],
+          [
+            0.3963317384370016,
+            0.33811802232854865,
+            0.41148325358851673,
+            0.34768740031897927
+          ],
+          [
+            0.3963317384370016,
+            0.34768740031897927,
+            0.41148325358851673,
+            0.4138755980861244
+          ],
+          [
+            0.41148325358851673,
+            0.26555023923444976,
+            0.5685805422647527,
+            0.33811802232854865
+          ]
+        ],
+        "areaRatio": 0.1297,
+        "centroid": [
+          0.2841218656673164,
+          0.38330171753723863
+        ]
+      },
+      {
+        "name": "书房",
+        "boxes": [
+          [
+            0.5685805422647527,
+            0.04784688995215311,
+            0.6291866028708134,
+            0.26555023923444976
+          ],
+          [
+            0.5685805422647527,
+            0.26555023923444976,
+            0.6291866028708134,
+            0.33811802232854865
+          ],
+          [
+            0.5685805422647527,
+            0.33811802232854865,
+            0.6291866028708134,
+            0.34768740031897927
+          ],
+          [
+            0.6291866028708134,
+            0.04784688995215311,
+            0.6491228070175439,
+            0.26555023923444976
+          ],
+          [
+            0.6291866028708134,
+            0.26555023923444976,
+            0.6491228070175439,
+            0.33811802232854865
+          ],
+          [
+            0.6491228070175439,
+            0.04784688995215311,
+            0.7169059011164274,
+            0.26555023923444976
+          ],
+          [
+            0.6491228070175439,
+            0.26555023923444976,
+            0.7169059011164274,
+            0.33811802232854865
+          ]
+        ],
+        "areaRatio": 0.0786,
+        "centroid": [
+          0.6421602672776252,
+          0.19497510031557638
+        ]
+      },
+      {
+        "name": "厨房",
+        "boxes": [
+          [
+            0.3963317384370016,
+            0.04784688995215311,
+            0.41148325358851673,
+            0.26555023923444976
+          ],
+          [
+            0.41148325358851673,
+            0.04784688995215311,
+            0.5685805422647527,
+            0.26555023923444976
+          ]
+        ],
+        "areaRatio": 0.0675,
+        "centroid": [
+          0.4824561403508772,
+          0.15669856459330145
+        ]
+      },
+      {
+        "name": "阳台",
+        "boxes": [
+          [
+            0.3548644338118022,
+            0.8181818181818182,
+            0.3963317384370016,
+            0.8572567783094099
+          ],
+          [
+            0.3548644338118022,
+            0.8572567783094099,
+            0.3963317384370016,
+            0.9409888357256778
+          ],
+          [
+            0.3963317384370016,
+            0.8181818181818182,
+            0.41148325358851673,
+            0.8572567783094099
+          ],
+          [
+            0.3963317384370016,
+            0.8572567783094099,
+            0.41148325358851673,
+            0.9409888357256778
+          ],
+          [
+            0.41148325358851673,
+            0.8181818181818182,
+            0.5685805422647527,
+            0.8572567783094099
+          ],
+          [
+            0.41148325358851673,
+            0.8572567783094099,
+            0.5685805422647527,
+            0.9409888357256778
+          ],
+          [
+            0.5685805422647527,
+            0.8181818181818182,
+            0.6291866028708134,
+            0.8572567783094099
+          ],
+          [
+            0.5685805422647527,
+            0.8572567783094099,
+            0.6291866028708134,
+            0.9409888357256778
+          ],
+          [
+            0.6291866028708134,
+            0.8181818181818182,
+            0.6491228070175439,
+            0.8572567783094099
+          ],
+          [
+            0.6291866028708134,
+            0.8572567783094099,
+            0.6491228070175439,
+            0.9409888357256778
+          ]
+        ],
+        "areaRatio": 0.0651,
+        "centroid": [
+          0.501993620414673,
+          0.879585326953748
+        ]
+      }
+    ],
+    "cellCoverageRatio": 0.9814,
+    "openingKindCoverageRatio": 0.9375
+  }
+}

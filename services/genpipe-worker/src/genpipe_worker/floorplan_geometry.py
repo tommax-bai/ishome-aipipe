@@ -27,6 +27,10 @@
    不加权时一间卫生间能顺着走廊把半个户型认领走（首轮实测如此）。
 6. **自证**：房间格拼起来占户型内部自由面积的比例。对不上即边界提取有问题，
    **响亮失败**（红线一：宁可说不出，不把没把握的结构往下游传）。
+7. **洞口类型**（2026-09-05 加）：门、窗、过口在掩膜上长得一样，区别在被开运算抹掉的细线上，
+   所以回原图灰度量三样证据——门弧（四分之一圆上多数采样角压到孤立细线）、跨洞平行线
+   （横向剖面里的暗谷）、门扇线（垂直于墙穿过断口的实线）。一样都没有就 `unknown` 并说明
+   缺什么，**不许默认成门**；入户门＝外轮廓上带门弧的洞，全户唯一。
 
 **产物没有任何绝对尺寸**。比例标定服务的是报告里的数字，出图只要相对关系对
 （交接文档追记七 §八-3）；洞宽如实给出去，是留给门洞反标定那一级标定物用的输入。
@@ -48,6 +52,7 @@ from __future__ import annotations
 
 import heapq
 import io
+import math
 from collections import deque
 from collections.abc import Iterable, Sequence
 
@@ -55,6 +60,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from genpipe_worker.models import (
     FloorplanGeometry,
+    OpeningKind,
     PlanAxis,
     PlanOpening,
     PlanWall,
@@ -151,6 +157,76 @@ MIN_GRID_LINES = 2
 差着一倍，把门槛抬上去等于按户型大小挑图。
 """
 
+# --- 洞口类型（2026-09-05）。下面每个数都只在 92㎡ 楼书图 + 138㎡ 渲染图两张上验过，
+# --- 各自的数据写在 docstring 里；样本更多前不当定值（《纪律·阈值有数据才定》）。
+
+OPENING_LINE_DARKNESS_MARGIN = 25
+"""细线"暗"的判据：比它所在那片底色暗多少才算线（灰度差）。底色按洞旁的地面实测，不写死——
+138 的地面是米色（灰度 205~230）、线是灰的（门弧 138~178、窗线 135~170），92 的纸面 236~243、
+线是黑的（≤140）。两张图里线与底色的最小差是 27（138 入户门弧 178 对地面 205）。"""
+
+DOOR_ARC_ANGLE_SAMPLES_DEG = tuple(range(10, 90, 5))
+"""门弧采样角：10°~85° 每 5° 一个，16 个。避开 0°（弧的起点就在墙上，压到的是墙）
+与 90°（那是门扇线）。"""
+
+DOOR_ARC_RADIUS_RANGE = (0.7, 1.2)
+"""门弧半径的搜索范围（占洞宽）。真跑 8 个门弧的半径落在 0.86~1.02 洞宽（掩膜开运算把断口
+两头各吃掉一两像素，所以弧常比断口短一点）。"""
+
+DOOR_ARC_RADIUS_TOLERANCE_PX = 2
+"""同一个半径 R 上"压到线"的容差：抗锯齿的细线摊在相邻一两个像素上。"""
+
+DOOR_ARC_ISOLATION_BAND_PX = (4, 9)
+"""孤立细线判据：R 两侧 4~9px 内不许再有暗像素。门弧是单根细线，家具的排线、飘窗里的
+填充、字形都不是——没有这一条，飘窗与家具会以 0.56~0.75 的命中率冒充门弧（真跑数据）；
+加上之后非门的孤立命中率最高 0.25。"""
+
+DOOR_ARC_MIN_ISOLATED_HIT_RATIO = 0.6
+"""门弧成立的门槛：16 个采样角里至少六成压到孤立细线。真跑 8 个门弧 0.75~0.94，
+23 个非门 ≤0.25（一个 19px 的墙角豁口 0.50，但它在前一道判据就被挡掉了）。取两者中间。"""
+
+DOOR_HINGE_ALONG_OFFSETS_PX = (-8, -6, -4, -2, 0, 2)
+"""铰链沿墙相对断口端点的可能偏移（负＝往断口里挪）。真跑 8 个门弧的最佳铰链在端点往里 0~6px：
+门框与开运算都让掩膜里的断口比门本身宽一点。"""
+
+DOOR_HINGE_ACROSS_STROKE_FRACTIONS = (0.0, 0.5)
+"""铰链横向相对墙线中心的偏移（占墙宽，朝摆向一侧）。铰链装在墙面上不在墙中心：
+真跑 8 个门弧里 6 个最佳在 0.5 墙宽、2 个在 0。"""
+
+CROSS_LINE_PROFILE_HALF_WIDTH_STROKES = 1.5
+"""跨洞平行线的横向剖面取墙线两侧各 1.5 倍墙宽：窗线画在墙带里（两面各一条 + 中间一两条玻璃线），
+再远就是屋里的东西了。"""
+
+CROSS_LINE_MIN_DIP_DEPTH = 40
+"""剖面上一条暗线的最小凸显度（比两侧 4px 内的亮处暗多少）。真跑 14 个窗 3~5 条（最紧的一个是
+138 阳台外沿：3 条，凸显 42/51/43）；带弧的门 0~1 条（138 的门画了门槛线）；过口 0 条。"""
+
+MIN_WINDOW_CROSS_LINES = 3
+"""外轮廓上的洞判成窗至少要几条跨洞暗线：窗的画法是两面各一条 + 玻璃线，最少三条。"""
+
+MIN_SLIDING_DOOR_CROSS_LINES = 2
+"""内墙上的洞、没有门弧，几条跨洞暗线判成推拉门：两扇各一条。
+真跑两个推拉门 2、3 条，两个过口 0 条。"""
+
+DOOR_LEAF_MIN_LENGTH_RATIO = 0.7
+"""门扇线（垂直于墙、穿过断口的实线）最短占洞宽几成。**只有一个样本支持这条**（92 主卧门：
+门开在一截没投出墙线的短墙上，落在产物里的断口只被门扇线穿过），而存档复判里它又在一个墙线
+错位的假洞上认过一条家具边——所以门扇线今天**只写进依据、不定类型**（结果是 `unknown`）。"""
+
+DOOR_LEAF_INTERIOR_RANGE = (0.1, 0.9)
+"""门扇线只在断口内部找（占洞宽的位置）：两端那两条垂直线是窗框、墙面轮廓，窗和门都有。"""
+
+DOOR_LEAF_MIN_CROSSING_PX = 3
+"""门扇线要在墙线两侧各露出至少这么多像素：不穿过墙位的垂直线是家具边。"""
+
+MAX_OPENING_WALL_COVER_RATIO = 0.5
+"""断口处（墙线 ±2px）沿洞长被任一方向的墙盖住的比例上限：超过即墙角豁口（同向墙图在转角
+必然缺一块，那几个像素属于另一条墙），不是洞。真跑一例 100%（92 主卧飘窗与阳台交界 19px）。"""
+
+MIN_PARALLEL_WALL_COVER_RATIO = 0.8
+"""墙线两侧 1.5 倍墙宽内若有一条横向偏移上沿洞长 ≥ 八成都是墙，这个断口是墙线错位（真墙在旁边），
+不是洞。真跑一例 100%（92 阳台右侧：两条几乎平行的墙线相隔 13px）。"""
+
 _OVERLAY_ROOM_COLORS = (
     (0, 122, 204),
     (0, 153, 102),
@@ -163,6 +239,15 @@ _OVERLAY_ROOM_COLORS = (
     (153, 102, 51),
 )
 """核验叠图的房间配色。只用于自证材料，不是产品配色（那归模板库）。"""
+
+_OVERLAY_OPENING_COLORS: dict[OpeningKind, tuple[int, int, int, int]] = {
+    "door": (40, 160, 230, 235),
+    "window": (230, 140, 20, 235),
+    "entry-door": (210, 30, 30, 235),
+    "passage": (30, 170, 90, 235),
+    "unknown": (120, 120, 120, 235),
+}
+"""核验叠图的洞口配色，按类型：门蓝、窗橙、入户门红、过口绿、推不出灰。类型对不对一眼可查。"""
 
 _CJK_FONT_CANDIDATES = (
     "/System/Library/Fonts/PingFang.ttc",
@@ -183,9 +268,7 @@ class FloorplanGeometryError(Exception):
 Bitmap = list[list[bool]]
 
 
-def _median_wall_stroke_px(
-    mask: Bitmap, left: int, top: int, right: int, bottom: int
-) -> float:
+def _median_wall_stroke_px(mask: Bitmap, left: int, top: int, right: int, bottom: int) -> float:
     """本图实测墙宽：图幅框内每个墙像素，取它横行程与竖行程的较小者（≈局部墙厚），全图取中位。
 
     直墙内部的像素：顺墙那向行程很长、跨墙那向就是墙厚，取小即墙厚；路口/转角处两向都长，
@@ -1236,7 +1319,453 @@ def _to_opening(
 
 
 # ---------------------------------------------------------------------------
-# 六、对外入口
+# 六、洞口类型：门弧 / 跨洞平行线 / 门扇线（2026-09-05）
+# ---------------------------------------------------------------------------
+#
+# 洞是墙掩膜上判出来的（第五步），可门、窗、过口在掩膜上长得一样——都是墙上的一段空白。
+# 区别在被开运算抹掉的那些细线上：门画一道四分之一圆弧（门扇摆过去的轨迹），窗在墙带里画
+# 两三条与墙平行的线，过口什么都不画。所以类型要回**原图灰度**上量，掩膜只用来避开墙。
+# 三样证据各挡一类，一样都没有就 `unknown`——**不许默认成门**：默认成门正是三维那边今天
+# 把窗渲成黑板、把门渲成落地玻璃时手里没有真值可判的原因（失效清单 B4）。
+
+
+_ARC_SAMPLES = tuple(
+    (math.cos(math.radians(degree)), math.sin(math.radians(degree)))
+    for degree in DOOR_ARC_ANGLE_SAMPLES_DEG
+)
+
+
+def _to_gray_planes(image_bytes: bytes) -> tuple[bytes, bytes]:
+    """原图灰度与它的 3×3 极小值图，都按行铺成一串字节。
+
+    细线抗锯齿会摊在相邻像素上，各像素都比线本身淡；取 3×3 极小值等于把线加粗到一定压得中，
+    又不会把两条相隔 4px 以上的线粘成一条（孤立判据要靠这个间隔）。
+    """
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        gray = image.convert("L")
+        return gray.tobytes(), gray.filter(ImageFilter.MinFilter(3)).tobytes()
+
+
+class _OpeningProbe:
+    """量洞口证据要的四样：原图灰度、极小值图、墙掩膜（任一方向）、本图墙宽。只在本模块内流转。"""
+
+    def __init__(
+        self,
+        gray: bytes,
+        min3: bytes,
+        wall_mask: Bitmap,
+        width_px: int,
+        height_px: int,
+        wall_stroke_px: float,
+    ) -> None:
+        self.gray = gray
+        self.min3 = min3
+        self.wall_mask = wall_mask
+        self.width_px = width_px
+        self.height_px = height_px
+        self.stroke_px = wall_stroke_px if wall_stroke_px > 0 else float(WALL_OPENING_KERNEL_PX)
+
+    def gray_at(self, x: int, y: int) -> int:
+        """图外按白算：图外没有线。"""
+        if 0 <= x < self.width_px and 0 <= y < self.height_px:
+            return self.gray[y * self.width_px + x]
+        return 255
+
+    def min3_at(self, x: int, y: int) -> int:
+        if 0 <= x < self.width_px and 0 <= y < self.height_px:
+            return self.min3[y * self.width_px + x]
+        return 255
+
+    def is_wall(self, x: int, y: int) -> bool:
+        return 0 <= x < self.width_px and 0 <= y < self.height_px and self.wall_mask[y][x]
+
+    @staticmethod
+    def point(axis: PlanAxis, along: float, across: float) -> tuple[int, int]:
+        """(沿墙, 横向) → (x, y)。竖墙沿 y 走、横向是 x；横墙反过来。"""
+        if axis == "vertical":
+            return round(across), round(along)
+        return round(along), round(across)
+
+
+class _OpeningPx:
+    """一个洞在像素坐标里的位置：墙线位置、沿墙起讫、洞宽。"""
+
+    def __init__(self, opening: PlanOpening, width_px: int, height_px: int) -> None:
+        self.axis: PlanAxis = opening.axis
+        if opening.axis == "vertical":
+            self.position = opening.position_ratio * width_px
+            self.start = opening.start_ratio * height_px
+            self.end = opening.end_ratio * height_px
+        else:
+            self.position = opening.position_ratio * height_px
+            self.start = opening.start_ratio * width_px
+            self.end = opening.end_ratio * width_px
+        self.length = max(self.end - self.start, 1.0)
+        self.is_on_outer_wall = opening.is_on_outer_wall
+        self.connects = opening.connects
+
+
+class _ArcVote:
+    """四个候选（铰链在起点/终点 × 朝低位/高位面摆）里最好的那个门弧投票结果。"""
+
+    def __init__(self) -> None:
+        self.isolated_hits = 0
+        self.hits = 0
+        self.radius_ratio = 0.0
+        self.hinge_at_start = True
+        self.toward_high = True
+
+    @property
+    def isolated_ratio(self) -> float:
+        return self.isolated_hits / len(_ARC_SAMPLES)
+
+
+def _wall_cover_ratio(probe: _OpeningProbe, opening: _OpeningPx) -> float:
+    """断口处（墙线 ±2px）沿洞长有多大比例被任一方向的墙像素盖着。"""
+    total = 0
+    covered = 0
+    for along in range(round(opening.start), round(opening.end) + 1):
+        total += 1
+        if any(
+            probe.is_wall(*probe.point(opening.axis, along, opening.position + offset))
+            for offset in (-2, -1, 0, 1, 2)
+        ):
+            covered += 1
+    return covered / total if total else 0.0
+
+
+def _parallel_wall_ratio(probe: _OpeningProbe, opening: _OpeningPx, half: int) -> tuple[float, int]:
+    """墙线两侧 ±half 内，哪个横向偏移上沿洞长（让开两端一成）墙像素最多；返回 (占比, 偏移)。"""
+    inset = 0.1 * opening.length
+    first = round(opening.start + inset)
+    last = round(opening.end - inset)
+    best_ratio = 0.0
+    best_offset = 0
+    for offset in range(-half, half + 1):
+        total = 0
+        walled = 0
+        for along in range(first, last + 1):
+            total += 1
+            if probe.is_wall(*probe.point(opening.axis, along, opening.position + offset)):
+                walled += 1
+        if total and walled / total > best_ratio:
+            best_ratio = walled / total
+            best_offset = offset
+    return best_ratio, best_offset
+
+
+def _cross_profile(probe: _OpeningProbe, opening: _OpeningPx, half: int) -> list[int]:
+    """横向剖面：墙线两侧 ±half 每个偏移上，沿洞长（让开两端 15%）的灰度中位。
+
+    窗线、推拉门扇都与墙平行、贯穿整个洞，所以在它们的偏移上中位是暗的；家具边只占洞长一截，
+    中位压不下去。
+    """
+    inset = 0.15 * opening.length
+    first = round(opening.start + inset)
+    last = round(opening.end - inset)
+    profile: list[int] = []
+    for offset in range(-half, half + 1):
+        values = sorted(
+            probe.gray_at(*probe.point(opening.axis, along, opening.position + offset))
+            for along in range(first, last + 1)
+        )
+        profile.append(values[len(values) // 2] if values else 255)
+    return profile
+
+
+def _count_cross_lines(profile: Sequence[int], depth: int) -> int:
+    """剖面里凸显度 ≥ depth 的暗谷个数：比两侧 4px 内的亮处至少暗 depth；相邻 3px 内只数一条。"""
+    count = 0
+    last = -10
+    index = 1
+    size = len(profile)
+    while index < size - 1:
+        value = profile[index]
+        if value <= profile[index - 1] and value <= profile[index + 1]:
+            plateau_end = index
+            while plateau_end + 1 < size and profile[plateau_end + 1] == value:
+                plateau_end += 1
+            left = max(profile[max(0, index - 4) : index])
+            right_slice = profile[plateau_end + 1 : plateau_end + 5]
+            right = max(right_slice) if right_slice else value
+            if min(left, right) - value >= depth and index - last >= 3:
+                count += 1
+                last = index
+            index = plateau_end + 1
+        else:
+            index += 1
+    return count
+
+
+def _sector_background(
+    probe: _OpeningProbe, opening: _OpeningPx, hinge: float, direction: int, sign: int
+) -> int:
+    """门弧会画在的那片扇形（半径 0.3~0.6 洞宽）里的灰度中位——那片地面的底色。"""
+    values: list[int] = []
+    for cos_t, sin_t in _ARC_SAMPLES[::2]:
+        for fraction in (0.3, 0.4, 0.5, 0.6):
+            radius = fraction * opening.length
+            x, y = probe.point(
+                opening.axis,
+                hinge + direction * radius * cos_t,
+                opening.position + sign * radius * sin_t,
+            )
+            values.append(probe.gray_at(x, y))
+    values.sort()
+    return values[len(values) // 2]
+
+
+def _door_arc(probe: _OpeningProbe, opening: _OpeningPx) -> _ArcVote:
+    """找门弧：以断口一端附近为圆心的四分之一圆，多数采样角上都压到一根孤立细线。
+
+    四个候选＝铰链在起点或终点 × 门朝低位面或高位面摆。每个候选再让圆心在铰链附近微移
+    （沿墙 :data:`DOOR_HINGE_ALONG_OFFSETS_PX`、横向 :data:`DOOR_HINGE_ACROSS_STROKE_FRACTIONS`），
+    半径在 :data:`DOOR_ARC_RADIUS_RANGE` 内投票：哪个半径 R 让最多采样角在 R±容差 内有暗像素，
+    且那根线两侧 4~9px 内干净（:data:`DOOR_ARC_ISOLATION_BAND_PX`）。落在墙掩膜上的像素不算暗——
+    弧的两端本来就搭在墙上。
+    """
+    length = opening.length
+    radius_low = int(DOOR_ARC_RADIUS_RANGE[0] * length)
+    radius_high = int(DOOR_ARC_RADIUS_RANGE[1] * length) + 1
+    band_low, band_high = DOOR_ARC_ISOLATION_BAND_PX
+    tolerance = DOOR_ARC_RADIUS_TOLERANCE_PX
+    best = _ArcVote()
+    for hinge_at_start in (True, False):
+        hinge = opening.start if hinge_at_start else opening.end
+        direction = 1 if hinge_at_start else -1
+        for toward_high in (False, True):
+            sign = 1 if toward_high else -1
+            threshold = (
+                _sector_background(probe, opening, hinge, direction, sign)
+                - OPENING_LINE_DARKNESS_MARGIN
+            )
+            for along_offset in DOOR_HINGE_ALONG_OFFSETS_PX:
+                center_along = hinge - direction * along_offset
+                for across_fraction in DOOR_HINGE_ACROSS_STROKE_FRACTIONS:
+                    center_across = opening.position + sign * across_fraction * probe.stroke_px
+                    dark_by_angle: list[set[int]] = []
+                    for cos_t, sin_t in _ARC_SAMPLES:
+                        dark: set[int] = set()
+                        for radius in range(radius_low - band_high, radius_high + band_high):
+                            x, y = probe.point(
+                                opening.axis,
+                                center_along + direction * radius * cos_t,
+                                center_across + sign * radius * sin_t,
+                            )
+                            if probe.is_wall(x, y):
+                                continue
+                            if probe.min3_at(x, y) < threshold:
+                                dark.add(radius)
+                        dark_by_angle.append(dark)
+                    for radius in range(radius_low, radius_high):
+                        hits = 0
+                        isolated = 0
+                        for dark in dark_by_angle:
+                            if not any(
+                                radius + delta in dark for delta in range(-tolerance, tolerance + 1)
+                            ):
+                                continue
+                            hits += 1
+                            if not any(
+                                radius + delta in dark or radius - delta in dark
+                                for delta in range(band_low, band_high + 1)
+                            ):
+                                isolated += 1
+                        if (isolated, hits) > (best.isolated_hits, best.hits):
+                            best.isolated_hits = isolated
+                            best.hits = hits
+                            best.radius_ratio = radius / length
+                            best.hinge_at_start = hinge_at_start
+                            best.toward_high = toward_high
+    return best
+
+
+def _door_leaf(
+    probe: _OpeningProbe, opening: _OpeningPx, profile: Sequence[int]
+) -> tuple[float, float] | None:
+    """门扇线：断口内部一条垂直于墙、穿过墙位、够长、够细的实线。返回 (长/洞宽, 位置/洞宽)。
+
+    只挡一种情形：门开在一截没投出墙线的短墙上（92 主卧门），产物里的断口是隔壁那条墙线上
+    与它相交的空白，门弧的圆心离这条线有半个门那么远、四个候选都够不着，只有门扇线穿过来。
+    """
+    length = opening.length
+    threshold = min(profile[0], profile[-1]) - OPENING_LINE_DARKNESS_MARGIN
+    half_stroke = probe.stroke_px / 2
+    span = int(1.2 * length)
+    interior_low, interior_high = DOOR_LEAF_INTERIOR_RANGE
+    best: tuple[float, float] | None = None
+
+    def dark(along: int, offset: int) -> bool:
+        x, y = probe.point(opening.axis, along, opening.position + offset)
+        return not probe.is_wall(x, y) and probe.min3_at(x, y) < threshold
+
+    for along in range(
+        round(opening.start + interior_low * length),
+        round(opening.start + interior_high * length) + 1,
+    ):
+        longest = (0, 0)
+        offset = -span
+        while offset <= span:
+            if not dark(along, offset):
+                offset += 1
+                continue
+            run_start = offset
+            run_end = offset
+            offset += 1
+            while offset <= span:
+                if dark(along, offset):
+                    run_end = offset
+                    offset += 1
+                elif offset + 1 <= span and dark(along, offset + 1):
+                    offset += 1
+                elif offset + 2 <= span and dark(along, offset + 2):
+                    offset += 2
+                else:
+                    break
+            if run_end - run_start > longest[1] - longest[0]:
+                longest = (run_start, run_end)
+        run_start, run_end = longest
+        run_length = run_end - run_start + 1
+        if run_length < DOOR_LEAF_MIN_LENGTH_RATIO * length:
+            continue
+        if run_start > -half_stroke - DOOR_LEAF_MIN_CROSSING_PX:
+            continue
+        if run_end < half_stroke + DOOR_LEAF_MIN_CROSSING_PX:
+            continue
+        # 细：同一段横向范围、沿墙错开 4px 的两侧都不该暗（否则是墙或色块，不是一根线）
+        thin = True
+        for side in (-4, 4):
+            samples = range(run_start, run_end + 1, 3)
+            dark_count = sum(
+                1
+                for offset in samples
+                if probe.gray_at(
+                    *probe.point(opening.axis, along + side, opening.position + offset)
+                )
+                < threshold
+            )
+            if dark_count > len(samples) / 2:
+                thin = False
+        if not thin:
+            continue
+        candidate = (run_length / length, (along - opening.start) / length)
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    return best
+
+
+def _kind_of(probe: _OpeningProbe, opening: _OpeningPx) -> tuple[OpeningKind, str]:
+    """一个洞的类型与依据。判据按"先排除不是洞的、再找门弧、再找窗线、最后门扇线"的次序。"""
+    half = max(2, round(CROSS_LINE_PROFILE_HALF_WIDTH_STROKES * probe.stroke_px))
+    cover = _wall_cover_ratio(probe, opening)
+    if cover >= MAX_OPENING_WALL_COVER_RATIO:
+        return "unknown", f"墙角豁口：断口处 {cover:.0%} 被另一方向的墙盖着，不是洞"
+    parallel, offset = _parallel_wall_ratio(probe, opening, half)
+    if parallel >= MIN_PARALLEL_WALL_COVER_RATIO:
+        return (
+            "unknown",
+            f"断口旁 {offset:+d}px 处贴着一道平行墙（沿洞长 {parallel:.0%}）——墙线错位，不是洞",
+        )
+    if not opening.connects:
+        return "unknown", "两侧都不属于任何房间（管井/设备位一类），不是户内的门窗"
+    outer = opening.is_on_outer_wall
+    where = "外轮廓上" if outer else "内墙上"
+    arc = _door_arc(probe, opening)
+    if arc.isolated_ratio >= DOOR_ARC_MIN_ISOLATED_HIT_RATIO:
+        evidence = (
+            f"门弧：{arc.isolated_hits}/{len(_ARC_SAMPLES)} 个采样角压到孤立细线，"
+            f"半径≈{arc.radius_ratio:.2f} 洞宽，铰链在{'起点' if arc.hinge_at_start else '终点'}、"
+            f"朝{'高位' if arc.toward_high else '低位'}面一侧摆；洞在{where}"
+        )
+        return ("entry-door" if outer else "door"), evidence
+    profile = _cross_profile(probe, opening, half)
+    lines = _count_cross_lines(profile, CROSS_LINE_MIN_DIP_DEPTH)
+    if outer and lines >= MIN_WINDOW_CROSS_LINES:
+        return (
+            "window",
+            f"跨洞平行线：横向剖面 {lines} 条暗线（凸显 ≥{CROSS_LINE_MIN_DIP_DEPTH}）、无门弧；"
+            f"洞在{where}",
+        )
+    if not outer and lines >= MIN_SLIDING_DOOR_CROSS_LINES:
+        return "door", f"跨洞平行线：横向剖面 {lines} 条暗线、无门弧；洞在{where}——推拉门画法"
+    leaf = _door_leaf(probe, opening, profile)
+    if leaf is not None:
+        # 门扇线单独不定类型：只有一个样本支持（92 主卧门），且存档复判里它在一个墙线错位的
+        # 假洞上认过一条家具边（真户型旧产物第 3 个洞）。先只如实写进依据，样本够了再升成判据。
+        length_ratio, position_ratio = leaf
+        return (
+            "unknown",
+            f"{where}的断口：无门弧、跨洞暗线 {lines} 条；断口内 {position_ratio:.2f} 处有一条"
+            f"垂直于墙、长 {length_ratio:.2f} 洞宽的实线穿过墙位（像门扇线，单样本判据不定）",
+        )
+    if outer:
+        return (
+            "unknown",
+            f"外轮廓上的断口：无门弧、跨洞暗线 {lines} 条不足 {MIN_WINDOW_CROSS_LINES}、"
+            "无门扇线——是窗是门定不了",
+        )
+    return "passage", f"内墙上的断口：无门弧、跨洞暗线 {lines} 条、无门扇线——没有门扇的过口"
+
+
+def _infer_opening_kinds(
+    probe: _OpeningProbe, openings: Sequence[PlanOpening]
+) -> list[PlanOpening]:
+    """给每个洞定类型。入户门全户唯一（方法论 T1）：外轮廓上带门弧的洞超过一个，一个都不认。"""
+    judged = [
+        _kind_of(probe, _OpeningPx(opening, probe.width_px, probe.height_px))
+        for opening in openings
+    ]
+    entry_count = sum(1 for kind, _ in judged if kind == "entry-door")
+    result: list[PlanOpening] = []
+    for opening, (kind, evidence) in zip(openings, judged, strict=True):
+        if kind == "entry-door" and entry_count > 1:
+            kind = "unknown"
+            evidence = (
+                f"外轮廓上有 {entry_count} 个带门弧的洞，入户门只能有一个（方法论 T1）；"
+                f"原判据：{evidence}"
+            )
+        result.append(opening.model_copy(update={"kind": kind, "kind_evidence": evidence}))
+    return result
+
+
+def _opening_kind_coverage(openings: Sequence[PlanOpening]) -> float:
+    """给出了非 unknown 类型的洞占全部洞的比例。一个洞都没有时记 1.0：没有一个是没推出来的。"""
+    if not openings:
+        return 1.0
+    return sum(1 for opening in openings if opening.kind != "unknown") / len(openings)
+
+
+def classify_opening_kinds(image_bytes: bytes, geometry: FloorplanGeometry) -> FloorplanGeometry:
+    """给一份已有的几何产物补洞口类型（原图 + 产物 → 带 `kind` 的产物）。**全程不调模型**。
+
+    :func:`extract_geometry` 已经顺手做了这一步；这个入口给的是**存档复判**——老产物
+    （比如三维那边留档的真户型 19 个洞）不重跑提取也能拿到类型，与新产物同一套判据。
+    """
+    mask, width_px, height_px = _to_wall_mask(image_bytes)
+    if geometry.frame_width_px and (width_px, height_px) != (
+        geometry.frame_width_px,
+        geometry.frame_height_px,
+    ):
+        raise FloorplanGeometryError(
+            [
+                f"图与产物对不上：图是 {width_px}×{height_px}，"
+                f"产物按 {geometry.frame_width_px}×{geometry.frame_height_px} 归一"
+            ]
+        )
+    grid = _locate_plan(mask, width_px, height_px)
+    gray, min3 = _to_gray_planes(image_bytes)
+    probe = _OpeningProbe(gray, min3, mask, width_px, height_px, grid.wall_stroke_px)
+    openings = _infer_opening_kinds(probe, geometry.openings)
+    return geometry.model_copy(
+        update={
+            "openings": openings,
+            "opening_kind_coverage_ratio": round(_opening_kind_coverage(openings), 4),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# 七、对外入口
 # ---------------------------------------------------------------------------
 
 
@@ -1274,6 +1803,10 @@ def extract_geometry(image_bytes: bytes, regions: Sequence[RoomRegion]) -> Floor
     rooms = _to_room_outlines(grid, cells, labels)
     room_at = _room_bitmap(grid, cells, labels, [room.name for room in rooms])
     walls, openings = _walls_and_openings(grid, room_at, [room.name for room in rooms])
+    gray, min3 = _to_gray_planes(image_bytes)
+    openings = _infer_opening_kinds(
+        _OpeningProbe(gray, min3, mask, width_px, height_px, grid.wall_stroke_px), openings
+    )
     coverage_ratio = _cell_coverage_ratio(grid, cells, labels)
     if coverage_ratio < MIN_CELL_COVERAGE_RATIO:
         raise FloorplanGeometryError(
@@ -1296,6 +1829,7 @@ def extract_geometry(image_bytes: bytes, regions: Sequence[RoomRegion]) -> Floor
         openings=openings,
         rooms=rooms,
         cell_coverage_ratio=round(coverage_ratio, 4),
+        opening_kind_coverage_ratio=round(_opening_kind_coverage(openings), 4),
     )
 
 
@@ -1421,7 +1955,7 @@ def render_geometry_overlay(image_bytes: bytes, geometry: FloorplanGeometry) -> 
                 fill=(20, 20, 20, 210),
             )
     for opening in geometry.openings:
-        colour = (230, 90, 20, 235) if opening.is_on_outer_wall else (40, 160, 230, 235)
+        colour = _OVERLAY_OPENING_COLORS[opening.kind]
         if opening.axis == "vertical":
             center_x = opening.position_ratio * width_px
             pen.rectangle(

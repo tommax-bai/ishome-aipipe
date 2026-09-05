@@ -96,10 +96,17 @@ uv run floorplan-geometry \
 - **产物没有任何绝对尺寸**：坐标全归一化。比例标定服务的是报告里的数字，出图只要相对关系对；
   洞宽如实给出去，是留给门洞反标定那一级标定物用的输入；
 - **画法归 render2d**：本步只出坐标。CLI 顺带出的核验叠图是解析件的自证材料
-  （"提取出来的东西和原图叠不叠得上"，验收判据本身），不是母版。
+  （"提取出来的东西和原图叠不叠得上"，验收判据本身），不是母版；
+- **洞口类型也从像素里推**（2026-09-05，`openings[].kind` / `kind_evidence`，闭集
+  door / window / passage / entry-door / unknown）：门弧、跨洞平行线两样证据各定一类，
+  一样都没有就 `unknown` 并说明缺什么，**不许默认成门**；入户门＝外轮廓上带门弧的洞、全户唯一。
+  产物带自证数 `openingKindCoverageRatio`（给出了类型的洞占几成）。存档复判：
+  `uv run floorplan-geometry --image 图.png --geometry 旧产物.json -o out/` 不重跑提取只补类型。
 
 真跑留档（三次勘测的稳定性、四次改判各自的根因、开阔处房间边界为什么不稳）：
 `_iteration/run-2026-08-30-floorplan-geometry/run.md`，叠图见同目录 `overlay-1.png`。
+洞口类型的调研与两张真图逐洞的类型表（含每条阈值的数据出处）：
+`_iteration/run-2026-09-05-opening-kind/run.md`。
 
 ## chat-svc 对业主说话的两个时点
 

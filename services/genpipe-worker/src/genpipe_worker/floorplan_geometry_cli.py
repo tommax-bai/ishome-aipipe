@@ -10,6 +10,9 @@
 
 产出两样：几何 JSON 与**核验叠图**。验收判据就是叠图——提取出来的墙、洞、房间画回原图上，
 叠得上就是对的，叠不上一眼能看见错在哪儿。
+
+`--geometry 存档.json` 是**存档复判**：不重跑提取，只给一份已有产物补洞口类型（2026-09-05）——
+三维那边留档的真户型产物就这么拿到 `kind`，与新产物同一套判据。
 """
 
 from __future__ import annotations
@@ -23,13 +26,14 @@ from pathlib import Path
 
 from genpipe_worker.floorplan_geometry import (
     FloorplanGeometryError,
+    classify_opening_kinds,
     extract_geometry,
     render_geometry_overlay,
 )
 from genpipe_worker.floorplan_parse import PARSE_LOGICAL_MODEL
 from genpipe_worker.floorplan_survey import FloorplanSurveyError, survey_floorplan
 from genpipe_worker.llm_client import LiteLlmVisionClient, LlmGatewayError
-from genpipe_worker.models import FloorplanSurvey
+from genpipe_worker.models import FloorplanGeometry, FloorplanSurvey
 
 _MEDIA_TYPE_BY_SUFFIX = {
     ".png": "image/png",
@@ -56,6 +60,17 @@ def load_survey(path: Path) -> FloorplanSurvey:
     return FloorplanSurvey.model_validate(payload)
 
 
+def load_geometry(path: Path) -> tuple[FloorplanGeometry, FloorplanSurvey | None]:
+    """从存档读几何产物（带着当时的勘测，有就一起带回）。既吃本工具的整份存档，也吃单独存的几何。"""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    survey = None
+    if isinstance(payload, dict) and "geometry" in payload:
+        if payload.get("survey"):
+            survey = FloorplanSurvey.model_validate(payload["survey"])
+        payload = payload["geometry"]
+    return FloorplanGeometry.model_validate(payload), survey
+
+
 async def _survey_once(
     image_bytes: bytes, media_type: str, args: argparse.Namespace
 ) -> FloorplanSurvey:
@@ -75,29 +90,46 @@ def _run(args: argparse.Namespace) -> int:
         print(f"读图失败：{e}", file=sys.stderr)
         return 2
 
-    if args.survey is not None:
+    survey: FloorplanSurvey | None
+    if args.geometry is not None:
+        # 存档复判：不重跑提取，只补洞口类型。
         try:
-            survey = load_survey(args.survey)
+            archived, survey = load_geometry(args.geometry)
         except (OSError, ValueError) as e:
-            print(f"读勘测存档失败：{e}", file=sys.stderr)
+            print(f"读几何存档失败：{e}", file=sys.stderr)
             return 2
+        try:
+            geometry = classify_opening_kinds(image_bytes, archived)
+        except FloorplanGeometryError as e:
+            print("洞口类型复判不通过：", file=sys.stderr)
+            for line in e.details:
+                print(f"  - {line}", file=sys.stderr)
+            return 3
         model_call_count = 0
     else:
-        try:
-            survey = asyncio.run(_survey_once(image_bytes, media_type, args))
-        except (FloorplanSurveyError, LlmGatewayError) as e:
-            print(f"勘测失败：{e}", file=sys.stderr)
-            return 2
-        model_call_count = 1
+        if args.survey is not None:
+            try:
+                survey = load_survey(args.survey)
+            except (OSError, ValueError) as e:
+                print(f"读勘测存档失败：{e}", file=sys.stderr)
+                return 2
+            model_call_count = 0
+        else:
+            try:
+                survey = asyncio.run(_survey_once(image_bytes, media_type, args))
+            except (FloorplanSurveyError, LlmGatewayError) as e:
+                print(f"勘测失败：{e}", file=sys.stderr)
+                return 2
+            model_call_count = 1
 
-    try:
-        geometry = extract_geometry(image_bytes, survey.rooms)
-    except FloorplanGeometryError as e:
-        # 响亮失败：说清缺什么，不给"差不多的"结构（红线一）。
-        print("几何提取不通过（fail loud，不降级往下游传）：", file=sys.stderr)
-        for line in e.details:
-            print(f"  - {line}", file=sys.stderr)
-        return 3
+        try:
+            geometry = extract_geometry(image_bytes, survey.rooms)
+        except FloorplanGeometryError as e:
+            # 响亮失败：说清缺什么，不给"差不多的"结构（红线一）。
+            print("几何提取不通过（fail loud，不降级往下游传）：", file=sys.stderr)
+            for line in e.details:
+                print(f"  - {line}", file=sys.stderr)
+            return 3
 
     print(f"模型调用 {model_call_count} 次（几何提取本身零次）")
     print(
@@ -107,6 +139,14 @@ def _run(args: argparse.Namespace) -> int:
     print(f"墙段 {len(geometry.walls)} 段；洞 {len(geometry.openings)} 个（")
     outer = sum(1 for opening in geometry.openings if opening.is_on_outer_wall)
     print(f"  外墙上 {outer} 个、内墙上 {len(geometry.openings) - outer} 个）")
+    kinds = [opening.kind for opening in geometry.openings]
+    print(
+        "洞口类型："
+        + "、".join(f"{kind} {kinds.count(kind)}" for kind in dict.fromkeys(kinds))
+        + f"；给出类型的占 {geometry.opening_kind_coverage_ratio:.1%}"
+    )
+    for index, opening in enumerate(geometry.openings):
+        print(f"  [{index}] {opening.kind:<10} {opening.kind_evidence}")
     print(f"房间 {len(geometry.rooms)} 个（占内部自由面积之比）：")
     for room in geometry.rooms:
         print(
@@ -126,7 +166,7 @@ def _run(args: argparse.Namespace) -> int:
                 "bytes": len(image_bytes),
             },
             "modelCallCount": model_call_count,
-            "survey": survey.model_dump(by_alias=True),
+            "survey": survey.model_dump(by_alias=True) if survey is not None else None,
             "geometry": geometry.model_dump(by_alias=True),
         }
         geometry_path = args.out / f"{stem}-geometry.json"
@@ -151,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         help="勘测存档 JSON（给了就零调用复跑；不给则现问一次）",
+    )
+    parser.add_argument(
+        "--geometry",
+        type=Path,
+        default=None,
+        help="几何存档 JSON：不重跑提取，只给这份产物补洞口类型（存档复判）",
     )
     parser.add_argument(
         "--model",
