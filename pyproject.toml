@@ -102,7 +102,7 @@ include_external_packages = true
 [[tool.importlinter.contracts]]
 name = "workflows 无 IO：只许依赖 models 与 activity 注册名（Temporal 可重放硬约束，非风格偏好）"
 type = "forbidden"
-source_modules = ["genpipe.workflows"]
+source_modules = ["genpipe.workflows", "genpipe.render3d_pipeline"]
 forbidden_modules = [
   "genpipe.repo",
   "genpipe.service",

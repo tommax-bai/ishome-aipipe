@@ -50,6 +50,8 @@ ALLOWED_VERTICAL_FILES = {
     # 2026-09-04 串联评审通过（有 import-linter 方向契约）：
     "object_store.py",  # genpipe_worker 出站边缘：私有桶读源图/写派生物（只依赖 oss2）
     "project_client.py",  # chat 出站边缘：project-svc REST 客户端（contracts project.v1）
+    # 2026-09-05 三维线编排（与 workflows 同一条"无 IO"import-linter 契约）：
+    "render3d_pipeline.py",  # genpipe 编排件：三维线（场景编译 → 底渲 → 写实化扇出）
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：

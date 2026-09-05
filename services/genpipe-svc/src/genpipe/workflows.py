@@ -43,6 +43,17 @@ with workflow.unsafe.imports_passed_through():
         UnitFanoutOutcome,
     )
 
+# 三维线编排件（scene-compile → base-render → realism-pass 扇出）：与 models 同属可重放件，
+# 本身不 import Temporal，派发经下方 `_render3d_step` 注入
+with workflow.unsafe.imports_passed_through():
+    from genpipe.render3d_pipeline import (
+        DispatchFailure,
+        SpaceRenderResult,
+        SpaceRenderSpec,
+        run_space_render,
+        space_render_spec_from_task,
+    )
+
 # activity 注册名常量（与 contracts 注册表逐字一致，只增不改）
 ACTIVITY_PLAN_LAYOUT_SOLVE = "plan-layout-solve"
 ACTIVITY_PLAN_RULE_CHECK = "plan-rule-check"
@@ -423,6 +434,11 @@ class GenerationTaskWorkflow:
 
     @workflow.run
     async def run(self, spec: GenerationTaskSpec) -> GenerationTaskResult:
+        if spec.task_type == "scene-compile":
+            # 三维线不是一条直线链（base-render 多机位 → realism-pass 每机位并行、门禁不过重派），
+            # `build_task_chain` 那种静态步骤表装不下，走 render3d_pipeline；那张表里的
+            # scene-compile 两步链是骨架期形态，留作对照
+            return await _run_space_render_task(spec)
         try:
             chain = build_task_chain(spec)
         except PipelineDataError as err:
@@ -1067,3 +1083,82 @@ def _require_str(result: dict[str, Any], field: str, activity_name: str) -> str:
 def _optional_str(result: dict[str, Any], field: str) -> str | None:
     value = result.get(field)
     return value if isinstance(value, str) and value else None
+
+
+# ---------------------------------------------------------------------------
+# 三维线（scene-compile → base-render → realism-pass 扇出）：编排逻辑在 render3d_pipeline，
+# 本处只提供派发器（Temporal 的超时/重试口径）与两个入口
+# ---------------------------------------------------------------------------
+
+_RENDER3D_STEP_TIMEOUTS: dict[str, timedelta] = {
+    ACTIVITY_SCENE_COMPILE: _COMPUTE_TIMEOUT,
+    ACTIVITY_BASE_RENDER: _RENDER_TIMEOUT,
+    ACTIVITY_REALISM_PASS: _IMAGEGEN_TIMEOUT,
+}
+"""三维线三步的 start_to_close：场景编译是纯库确定性计算；底渲是 numpy 软光栅、一次派多台机位；
+写实化同 atmosphere 一张图的口径。三者都**不打心跳**（render3d 草案与 imagegen 实装都没有），
+故不置 long_running——设了心跳窗口等于按 60 s 误杀正常执行。"""
+
+
+async def _render3d_step(activity_name: str, arg: Any, task_queue: str) -> dict[str, Any]:
+    """render3d_pipeline 的派发器：回执原样交回（ok / failed 都回，verdict 由编排看），
+    派发本身失败（重试耗尽 / 回执非 dict）收成 DispatchFailure。"""
+    try:
+        return await _execute(
+            activity_name,
+            arg,
+            task_queue=task_queue,
+            start_to_close=_RENDER3D_STEP_TIMEOUTS.get(activity_name),
+        )
+    except (ActivityError, PipelineDataError) as err:
+        raise DispatchFailure(activity_name, describe_failure(err)) from err
+
+
+def fold_space_render_result(result: SpaceRenderResult) -> GenerationTaskResult:
+    """三维线结论 → 交互侧任务层结论（纯函数）：产物 id 取写实图键（每台成功机位一条），
+    失败机位逐条进 failed_checks（`机位:哪一步:原因`）。五路键与自证数装不进 GenerationTaskResult，
+    要整份结论走 SpaceRenderWorkflow。"""
+    failed_checks = list(result.failed_checks)
+    for camera in result.failed_cameras:
+        failed_checks.extend(
+            f"{camera.camera_id}:{camera.stage}:{check}" for check in camera.failed_checks
+        )
+    return GenerationTaskResult(
+        task_id=result.task_id,
+        verdict="passed" if result.verdict == "ok" else "failed",
+        artifact_ids=[render.image_object_key for render in result.renders],
+        failed_checks=failed_checks,
+    )
+
+
+async def _run_space_render_task(spec: GenerationTaskSpec) -> GenerationTaskResult:
+    """GenerationTaskWorkflow 的 scene-compile 分支：params 即 SpaceRenderSpec 的字段
+    （snake_case）。
+
+    门禁（consistency / compliance）两个 activity 仍是存根，本线与三张图线一样暂不派——
+    时点写死＝那两个 activity 实装时。写实化自己的保真度门禁在 realism-pass 里，已经过了。
+    """
+    try:
+        render_spec = space_render_spec_from_task(spec.task_id, spec.params, spec.queues)
+    except ValueError as err:  # pydantic ValidationError：字段缺了或多了，派发前拦
+        return GenerationTaskResult(
+            task_id=spec.task_id,
+            verdict="failed",
+            failed_checks=[f"invalid-space-render-spec:{err}"],
+        )
+    return fold_space_render_result(await run_space_render(render_spec, _render3d_step))
+
+
+@workflow.defn
+class SpaceRenderWorkflow:
+    """三维线整份结论的入口：每台机位五路键 + 写实图键 + 自证数 + 门禁结果，失败机位单列。
+
+    与 GenerationTaskWorkflow 的 scene-compile 分支跑的是同一条链；那边把结论折成任务层形态
+    （只剩写实图键与失败码），这边原样交回。结果回流业务侧（task-result-deliver）本线暂不接：
+    contracts `genpipe.v1` 的产物词表 `floorplan_visuals_product` 里还没有写实图那一项，
+    时点写死＝词表加行那一次。
+    """
+
+    @workflow.run
+    async def run(self, spec: SpaceRenderSpec) -> SpaceRenderResult:
+        return await run_space_render(spec, _render3d_step)
