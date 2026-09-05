@@ -38,6 +38,10 @@
 **常量全部是单张样本实测值**（那张 92㎡ 楼书级矢量渲染图，1080×1466）。跨图与脏图没有数据
 （技术债"只测过一张图"，处置时点＝拿到第二批样本）。它们按图的**相对尺度**取值而不是写死
 像素，但相对尺度本身也只在一张图上验过。
+
+**2026-09-05 补**：第二批样本到了（138㎡ 彩色渲染户型图，1254×1254）。墙厚上限已改成随图实测
+（:data:`WALL_THICKNESS_STROKE_MULTIPLE`），格子墙占比按 92+138 两张 retune（:data:`MAX_CELL_WALL_RATIO`）——
+这两条不再是单样本值；其余常量仍只在 92 上验过。
 """
 
 from __future__ import annotations
@@ -68,13 +72,21 @@ WALL_OPENING_KERNEL_PX = 5
 MIN_WALL_COMPONENT_LONG_SIDE_RATIO = 0.08
 """连通域长边下限（占整图长边）：短于此不算墙。楼书页上的"92"两个字就是这么丢掉的。"""
 
-MAX_WALL_THICKNESS_RATIO = 0.05
-"""墙厚上限（占**图幅**长边，不是整页长边）：宽于此的暗条不是墙的横截面，是顺着墙走的那一段。
+WALL_THICKNESS_STROKE_MULTIPLE = 2.0
+"""墙厚上限＝本图实测墙宽的几倍。宽于此的暗条不是墙的横截面，是顺着墙走的那一段
+（或路口两墙叠出来的一坨）。
 
-按图幅取而不是按页面取：墙厚随图的画幅缩放，与页面留多少白边无关。同一套户型印在
-半版和整版上，页面长边差一倍，墙厚占图幅的比例却不变。取 0.05 是宽松的——十一米开间的
-户型上相当于 550mm，比任何一堵墙都厚；再厚就只能是顺着墙切出来的那一长条了。
+**为什么改成随图量、不写死比例**：原先 0.05×图幅长边是照单张样本（92㎡）定的。第二批
+样本（138㎡ 渲染户型图）到了才发现它太松——图幅大时 0.05 折算成五六十像素，把路口墙角
+那一坨（约 56px）也当墙投了票，投出一条偏内侧的假墙线，把房间边界顶得离真墙差一个墙厚，
+外圈闭合率因此只有 67%。改成 2×实测墙宽后：138 实测墙约 18px、上限 36px，路口那坨被挡在外；
+92 的墙约 11px、上限 22px，都够得着真墙。取 2 而不是别的倍数，是因为一条真墙横切最宽也就到
+约两倍墙厚（转角处），再宽必是顺墙或路口。实测墙宽＝墙掩膜里每个墙像素横竖行程取小、全图取中位。
 """
+
+MAX_WALL_THICKNESS_RATIO = 0.05
+"""墙厚上限的**兜底**比例（占图幅长边）：只有实测墙宽量不出来（图上没有墙，本就要响亮失败）
+时才退回它；正常路径走 :data:`WALL_THICKNESS_STROKE_MULTIPLE`。"""
 
 MIN_WALL_LINE_VOTES = 16
 """一条墙线的票数下限：投它的行（列）少于此即噪声。约当图上 16px 长的一段墙。"""
@@ -99,8 +111,14 @@ MIN_CELL_SIDE_PX = 10
 CELL_INSET_PX = 5
 """判断格子空不空时从四边缩进的量：不缩进会把边界上的墙算进格子内部。"""
 
-MAX_CELL_WALL_RATIO = 0.25
-"""格子内部允许的墙占比：超过即这格是墙不是屋。"""
+MAX_CELL_WALL_RATIO = 0.50
+"""格子内部允许的墙占比：超过即这格是墙不是屋。
+
+取 0.50 不 0.25：0.25 照 92㎡ 单图定，太严——贴着外墙那圈地板格里混进小半格墙带，
+就被判成"墙不是屋"，房间边界因此缩进一个墙厚、够不着外墙（138 闭合 67% 的另一半原因）。
+放到 0.50 后 138 闭合 0.67→0.98、92 也 0.937→0.963，两张都过。**这是 retune 不是公式**：
+只在 92+138 两张上验过、落在 0.45~0.60 都能过的平台中段，样本更多前不当定值（《纪律·阈值有数据才定》）。
+"""
 
 MIN_CELL_INSIDE_RATIO = 0.5
 """格子落在户型轮廓内的比例下限：低于此即页面空白，不是屋（图幅框是矩形，户型不是）。"""
@@ -165,6 +183,52 @@ class FloorplanGeometryError(Exception):
 Bitmap = list[list[bool]]
 
 
+def _median_wall_stroke_px(
+    mask: Bitmap, left: int, top: int, right: int, bottom: int
+) -> float:
+    """本图实测墙宽：图幅框内每个墙像素，取它横行程与竖行程的较小者（≈局部墙厚），全图取中位。
+
+    直墙内部的像素：顺墙那向行程很长、跨墙那向就是墙厚，取小即墙厚；路口/转角处两向都长，
+    是少数，被中位数摊掉。所以中位≈这张图上典型的一堵墙有多厚，随画幅自动缩放。
+    """
+    w = right - left + 1
+    h = bottom - top + 1
+    if w <= 0 or h <= 0:
+        return 0.0
+    h_run = [[0] * w for _ in range(h)]
+    for gy in range(h):
+        row = mask[top + gy]
+        gx = 0
+        while gx < w:
+            if row[left + gx]:
+                run_start = gx
+                while gx < w and row[left + gx]:
+                    gx += 1
+                length = gx - run_start
+                for xx in range(run_start, gx):
+                    h_run[gy][xx] = length
+            else:
+                gx += 1
+    strokes: list[int] = []
+    for gx in range(w):
+        gy = 0
+        while gy < h:
+            if mask[top + gy][left + gx]:
+                run_start = gy
+                while gy < h and mask[top + gy][left + gx]:
+                    gy += 1
+                length = gy - run_start
+                for yy in range(run_start, gy):
+                    horizontal = h_run[yy][gx]
+                    strokes.append(horizontal if horizontal < length else length)
+            else:
+                gy += 1
+    if not strokes:
+        return 0.0
+    strokes.sort()
+    return float(strokes[len(strokes) // 2])
+
+
 class _Grid:
     """一次提取的中间状态：掩膜、图幅、墙线、轮廓。只在本模块内流转，不下发。"""
 
@@ -192,7 +256,18 @@ class _Grid:
         self.plan_long_side_px = float(
             max(plan_right_px - plan_left_px, plan_bottom_px - plan_top_px)
         )
-        """图幅长边。墙厚上限与洞长下限都按它取——两者都是图上的尺度，与页面留白无关。"""
+        """图幅长边。洞长下限按它取——是图上的尺度，与页面留白无关。"""
+        self.wall_stroke_px = _median_wall_stroke_px(
+            wall_mask, plan_left_px, plan_top_px, plan_right_px, plan_bottom_px
+        )
+        """本图实测墙宽（中位）。见 :func:`_median_wall_stroke_px`。"""
+        self.wall_thickness_max_px = (
+            WALL_THICKNESS_STROKE_MULTIPLE * self.wall_stroke_px
+            if self.wall_stroke_px > 0
+            else MAX_WALL_THICKNESS_RATIO * self.plan_long_side_px
+        )
+        """墙厚上限（像素）：**给墙线定位用**——截面宽于此的暗条不投票（挡住路口那一坨、别投出假墙线）。
+        随图实测，见 :data:`WALL_THICKNESS_STROKE_MULTIPLE`。圈墙像素那步用兜底比例，见 :func:`_build_parallel_wall_mask`。"""
         self.parallel_wall: dict[str, Bitmap] = {}
         """按轴向分开的墙体图：`parallel_wall["vertical"]` 里为真的像素属于一条**竖**墙。
 
@@ -303,7 +378,13 @@ def _dark_runs(grid: _Grid, axis: PlanAxis, along: int) -> Iterable[tuple[int, i
 
 
 def _build_parallel_wall_mask(grid: _Grid, axis: PlanAxis) -> Bitmap:
-    """标出属于**同向**墙的像素：截面不宽于墙厚上限的那些暗条。"""
+    """标出属于**同向**墙的像素：截面不宽于墙厚上限的那些暗条。
+
+    这里用**宽松**上限（兜底比例，非实测那条紧的）：路口两墙交叠处，这一向的墙被横穿的
+    墙撑宽，那几行仍然**是这堵墙的像素**，丢了会把一堵连续的墙从路口劈成两段
+    （单测 `test_junction_rows_do_not_fake_a_thick_band` 就在防这个）。定位墙线要精，
+    那用紧的（见 :func:`_vote_wall_lines`）；圈墙像素要全，这里用松的。
+    """
     thickness_max_px = MAX_WALL_THICKNESS_RATIO * grid.plan_long_side_px
     parallel: Bitmap = [[False] * grid.width_px for _ in range(grid.height_px)]
     scan = (
@@ -328,7 +409,7 @@ def _vote_wall_lines(grid: _Grid, axis: PlanAxis) -> tuple[list[int], dict[int, 
 
     返回墙线坐标与每条线的厚度（取投它那些暗条宽度的中位数——外墙比内墙厚，母版要照画）。
     """
-    thickness_max_px = MAX_WALL_THICKNESS_RATIO * grid.plan_long_side_px
+    thickness_max_px = grid.wall_thickness_max_px
     votes: dict[int, int] = {}
     widths: dict[int, list[int]] = {}
     scan = (
