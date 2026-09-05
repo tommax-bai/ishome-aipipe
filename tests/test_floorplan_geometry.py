@@ -12,15 +12,17 @@
 from __future__ import annotations
 
 import io
+from collections.abc import Callable, Sequence
 
 import pytest
 from genpipe_worker.floorplan_geometry import (
     MIN_OPENING_LENGTH_RATIO,
     FloorplanGeometryError,
+    classify_opening_kinds,
     extract_geometry,
     render_geometry_overlay,
 )
-from genpipe_worker.models import RoomRegion
+from genpipe_worker.models import FloorplanGeometry, PlanOpening, RoomRegion
 from PIL import Image, ImageDraw
 
 _IMAGE_SIZE_PX = (600, 600)
@@ -313,3 +315,214 @@ def test_junction_rows_do_not_fake_a_thick_band() -> None:
     assert (band.face_high_ratio - band.face_low_ratio) * width == pytest.approx(8, abs=1)
     assert band.start_ratio == wall.start_ratio
     assert band.end_ratio == wall.end_ratio
+
+
+# ---------------------------------------------------------------------------
+# 洞口类型（2026-09-05）：门弧 → 门 / 入户门；跨洞平行线 → 窗；什么都没画 → 过口或 unknown
+# ---------------------------------------------------------------------------
+
+_Decorate = Callable[[ImageDraw.ImageDraw], None]
+
+
+def _plan_with_openings(
+    *, top_gaps: Sequence[tuple[int, int]] = (), decorate: _Decorate | None = None
+) -> bytes:
+    """两间房 + 隔墙门洞，外墙四条各画一条 12px 实心条，顶墙可留若干缺口。细线由 `decorate` 画。"""
+    page = _blank_page()
+    pen = ImageDraw.Draw(page)
+    black = (0, 0, 0)
+    cursor = _PLAN_LEFT_PX
+    for gap_start, gap_end in top_gaps:
+        pen.rectangle([cursor, _PLAN_TOP_PX, gap_start, _PLAN_TOP_PX + 11], fill=black)
+        cursor = gap_end
+    pen.rectangle([cursor, _PLAN_TOP_PX, _PLAN_RIGHT_PX, _PLAN_TOP_PX + 11], fill=black)
+    pen.rectangle(
+        [_PLAN_LEFT_PX, _PLAN_BOTTOM_PX - 11, _PLAN_RIGHT_PX, _PLAN_BOTTOM_PX], fill=black
+    )
+    pen.rectangle([_PLAN_LEFT_PX, _PLAN_TOP_PX, _PLAN_LEFT_PX + 11, _PLAN_BOTTOM_PX], fill=black)
+    pen.rectangle([_PLAN_RIGHT_PX - 11, _PLAN_TOP_PX, _PLAN_RIGHT_PX, _PLAN_BOTTOM_PX], fill=black)
+    pen.rectangle(
+        [_PARTITION_X_PX - 4, _PLAN_TOP_PX, _PARTITION_X_PX + 4, _DOOR_TOP_PX], fill=black
+    )
+    pen.rectangle(
+        [_PARTITION_X_PX - 4, _DOOR_BOTTOM_PX, _PARTITION_X_PX + 4, _PLAN_BOTTOM_PX], fill=black
+    )
+    if decorate is not None:
+        decorate(pen)
+    buffer = io.BytesIO()
+    page.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _door_arc_into_east_room(pen: ImageDraw.ImageDraw) -> None:
+    """隔墙门洞的门弧：铰链在东面墙面的上端，门扇摆进东屋——四分之一圆，半径＝门宽。"""
+    radius = _DOOR_BOTTOM_PX - _DOOR_TOP_PX
+    hinge_x, hinge_y = _PARTITION_X_PX + 4, _DOOR_TOP_PX
+    pen.arc(
+        [hinge_x - radius, hinge_y - radius, hinge_x + radius, hinge_y + radius],
+        start=0,
+        end=90,
+        fill=(0, 0, 0),
+        width=1,
+    )
+
+
+def _window_lines(gap: tuple[int, int]) -> _Decorate:
+    """顶墙缺口里的窗：墙带内三条与墙平行的 1px 细线（两面各一条 + 中间一条玻璃线）。"""
+
+    def draw(pen: ImageDraw.ImageDraw) -> None:
+        for offset in (2, 6, 10):
+            y = _PLAN_TOP_PX + offset
+            pen.line([(gap[0], y), (gap[1], y)], fill=(0, 0, 0), width=1)
+
+    return draw
+
+
+def _entry_arc_outward(gap: tuple[int, int]) -> _Decorate:
+    """顶墙缺口里的入户门：门弧画在户型之外（往上摆），铰链在缺口起点的外墙面上。"""
+
+    def draw(pen: ImageDraw.ImageDraw) -> None:
+        radius = gap[1] - gap[0]
+        hinge_x, hinge_y = gap[0], _PLAN_TOP_PX
+        pen.arc(
+            [hinge_x - radius, hinge_y - radius, hinge_x + radius, hinge_y + radius],
+            start=270,
+            end=360,
+            fill=(0, 0, 0),
+            width=1,
+        )
+
+    return draw
+
+
+def _both(*decorators: _Decorate) -> _Decorate:
+    def draw(pen: ImageDraw.ImageDraw) -> None:
+        for decorator in decorators:
+            decorator(pen)
+
+    return draw
+
+
+def _inner_openings(geometry: FloorplanGeometry) -> list[PlanOpening]:
+    return [opening for opening in geometry.openings if not opening.is_on_outer_wall]
+
+
+def _outer_openings(geometry: FloorplanGeometry) -> list[PlanOpening]:
+    return [opening for opening in geometry.openings if opening.is_on_outer_wall]
+
+
+def test_bare_inner_gap_is_a_passage_not_a_door() -> None:
+    """墙上只有一段空白、什么都没画：那是过口。**不许默认成门**——默认成门正是三维那边
+    今天把窗渲成黑板时手里没有真值可判的原因（失效清单 B4）。"""
+    geometry = extract_geometry(_plan_with_openings(), _regions())
+
+    (opening,) = _inner_openings(geometry)
+    assert opening.kind == "passage"
+    assert "无门弧" in opening.kind_evidence
+
+
+def test_door_arc_marks_the_inner_opening_as_a_door() -> None:
+    """门弧＝四分之一圆上多数采样角压到一根孤立细线；有它就是门，依据要写出量到的数。"""
+    geometry = extract_geometry(_plan_with_openings(decorate=_door_arc_into_east_room), _regions())
+
+    (opening,) = _inner_openings(geometry)
+    assert opening.kind == "door"
+    assert opening.kind_evidence.startswith("门弧：")
+    assert "/16 个采样角" in opening.kind_evidence
+
+
+def test_window_lines_on_the_outer_wall_mark_a_window() -> None:
+    """外轮廓上的洞、墙带里有三条与墙平行的细线：窗。"""
+    gap = (150, 230)
+    geometry = extract_geometry(
+        _plan_with_openings(top_gaps=[gap], decorate=_window_lines(gap)), _regions()
+    )
+
+    (opening,) = _outer_openings(geometry)
+    assert opening.kind == "window"
+    assert "跨洞平行线" in opening.kind_evidence
+
+
+def test_bare_outer_gap_stays_unknown() -> None:
+    """外轮廓上的洞、什么都没画：是窗是门定不了，说 unknown 并说明缺什么——不猜成窗。"""
+    geometry = extract_geometry(_plan_with_openings(top_gaps=[(150, 230)]), _regions())
+
+    (opening,) = _outer_openings(geometry)
+    assert opening.kind == "unknown"
+    assert "无门弧" in opening.kind_evidence
+
+
+def test_outer_arc_is_the_entry_door() -> None:
+    """外轮廓上带门弧的洞＝入户门（方法论 T1：全户只有一个）。"""
+    gap = (150, 220)
+    geometry = extract_geometry(
+        _plan_with_openings(top_gaps=[gap], decorate=_entry_arc_outward(gap)), _regions()
+    )
+
+    (opening,) = _outer_openings(geometry)
+    assert opening.kind == "entry-door"
+    assert "门弧" in opening.kind_evidence
+
+
+def test_two_outer_arcs_leave_both_unknown() -> None:
+    """外轮廓上两个带门弧的洞：入户门只能有一个，哪个都不认，两个都 unknown 且说明为什么。"""
+    gaps = [(150, 220), (360, 430)]
+    geometry = extract_geometry(
+        _plan_with_openings(
+            top_gaps=gaps, decorate=_both(_entry_arc_outward(gaps[0]), _entry_arc_outward(gaps[1]))
+        ),
+        _regions(),
+    )
+
+    outer = _outer_openings(geometry)
+    assert len(outer) == 2
+    assert [opening.kind for opening in outer] == ["unknown", "unknown"]
+    assert all("入户门只能有一个" in opening.kind_evidence for opening in outer)
+
+
+def test_opening_kind_coverage_counts_the_decided_openings() -> None:
+    """自证数＝给出了非 unknown 类型的洞占全部洞的比例：一门一窗全给出＝1.0，外墙空洞拖成一半。"""
+    gap = (150, 230)
+    decided = extract_geometry(
+        _plan_with_openings(
+            top_gaps=[gap], decorate=_both(_door_arc_into_east_room, _window_lines(gap))
+        ),
+        _regions(),
+    )
+    assert decided.opening_kind_coverage_ratio == 1.0
+
+    half = extract_geometry(
+        _plan_with_openings(top_gaps=[gap], decorate=_door_arc_into_east_room), _regions()
+    )
+    assert half.opening_kind_coverage_ratio == 0.5
+
+
+def test_archived_geometry_is_rejudged_by_the_same_rules() -> None:
+    """存档复判与提取同一套判据：把产物里的类型抹掉再复判，逐字回到提取时的结果。"""
+    gap = (150, 230)
+    image_bytes = _plan_with_openings(
+        top_gaps=[gap], decorate=_both(_door_arc_into_east_room, _window_lines(gap))
+    )
+    extracted = extract_geometry(image_bytes, _regions())
+    stripped = extracted.model_copy(
+        update={
+            "openings": [
+                opening.model_copy(update={"kind": "unknown", "kind_evidence": ""})
+                for opening in extracted.openings
+            ],
+            "opening_kind_coverage_ratio": 0.0,
+        }
+    )
+
+    rejudged = classify_opening_kinds(image_bytes, stripped)
+
+    assert rejudged.model_dump() == extracted.model_dump()
+
+
+def test_rejudging_against_the_wrong_image_fails_loud() -> None:
+    """图与产物尺寸对不上就不复判：类型是在这张图上量出来的，换一张图量出来的是别的东西。"""
+    extracted = extract_geometry(_plan_with_openings(), _regions())
+    with pytest.raises(FloorplanGeometryError) as failure:
+        classify_opening_kinds(_partition_with_stub_plan(), extracted)
+
+    assert "对不上" in "；".join(failure.value.details)
