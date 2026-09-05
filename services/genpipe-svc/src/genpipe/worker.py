@@ -21,6 +21,7 @@ from genpipe.workflows import (
     GenBatchWorkflow,
     GenerationTaskWorkflow,
     ReportComposeWorkflow,
+    SpaceRenderDispatchWorkflow,
     SpaceRenderWorkflow,
 )
 
@@ -50,6 +51,7 @@ async def run_worker(address: str | None = None, namespace: str | None = None) -
             ReportComposeWorkflow,
             FloorplanVisualsWorkflow,
             SpaceRenderWorkflow,
+            SpaceRenderDispatchWorkflow,
         ],
     )
     stop = asyncio.Event()
