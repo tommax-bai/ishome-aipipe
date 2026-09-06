@@ -64,7 +64,7 @@ async def test_space_render_workflow_lists_failed_camera_and_redispatches_gate_r
     living, bedroom = result.renders
     assert living.gate_redispatches == 1 and living.control_key.endswith("/sketch.png")
     assert bedroom.gate_redispatches == 0 and bedroom.control_key.endswith("/line.png")
-    assert living.image_object_key.endswith("realism-cam-room-living-modern-minimal.png")
+    assert living.image_object_key.endswith("/cam-room-living/realism-modern-minimal.png")
     assert living.gate["passed"] is True and living.evidence["backend_name"] == "wanx-sketch"
 
     dispatched = [name for name, _ in log]
@@ -109,9 +109,9 @@ async def test_generation_task_scene_compile_branch_folds_into_task_result() -> 
         )
 
     assert result.verdict == "passed"
-    assert [key.rsplit("/", 1)[1] for key in result.artifact_ids] == [
-        "realism-cam-room-living-modern-minimal.png",
-        "realism-cam-room-bedroom-modern-minimal.png",
+    assert ["/".join(key.rsplit("/", 2)[1:]) for key in result.artifact_ids] == [
+        "cam-room-living/realism-modern-minimal.png",
+        "cam-room-bedroom/realism-modern-minimal.png",
     ]
     assert result.failed_checks == [
         "cam-bird-dollhouse:base-render:"

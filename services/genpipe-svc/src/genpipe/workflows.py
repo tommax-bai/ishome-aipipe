@@ -54,6 +54,15 @@ with workflow.unsafe.imports_passed_through():
         space_render_spec_from_task,
     )
 
+# 三维线派发形态（派发入参 + 回流装配）：与 render3d_pipeline 同属可重放件，不 import Temporal
+with workflow.unsafe.imports_passed_through():
+    from genpipe.space_render_dispatch import (
+        SpaceRenderDispatchResult,
+        SpaceRenderDispatchSpec,
+        build_space_render_task_result,
+        space_render_products,
+    )
+
 # activity 注册名常量（与 contracts 注册表逐字一致，只增不改）
 ACTIVITY_PLAN_LAYOUT_SOLVE = "plan-layout-solve"
 ACTIVITY_PLAN_RULE_CHECK = "plan-rule-check"
@@ -1162,3 +1171,60 @@ class SpaceRenderWorkflow:
     @workflow.run
     async def run(self, spec: SpaceRenderSpec) -> SpaceRenderResult:
         return await run_space_render(spec, _render3d_step)
+
+
+async def _deliver_task_result(
+    result_callback_url: str,
+    result_payload: dict[str, Any],
+    task_queue: str,
+    failed_checks: list[str],
+) -> bool:
+    """把结论 `POST` 到派发时注入的回调地址（task-result-deliver）；送不到记进 failed_checks、
+    回 False。与 `FloorplanVisualsWorkflow._deliver` 同口径——那边绑在三张图的 spec 上，本处只要
+    地址与队列。
+    """
+    try:
+        delivered = await _execute(
+            ACTIVITY_TASK_RESULT_DELIVER,
+            {"result_callback_url": result_callback_url, "result": result_payload},
+            task_queue=task_queue,
+            retry_policy=_DELIVER_RETRY,
+        )
+    except (ActivityError, PipelineDataError) as err:
+        failed_checks.append(f"{ACTIVITY_TASK_RESULT_DELIVER}:{describe_failure(err)}")
+        return False
+    if delivered.get("verdict") != "ok":
+        failed_checks.append(f"{ACTIVITY_TASK_RESULT_DELIVER}:{summarize_violations(delivered)}")
+        return False
+    return True
+
+
+@workflow.defn
+class SpaceRenderDispatchWorkflow:
+    """三维线的派发形态：project-svc 铸任务 → `POST /space-renders` → 本 workflow →
+    结论按派发时注入的回调地址送回业务侧。
+
+    与 SpaceRenderWorkflow 跑同一条链（`run_space_render`），多做两件：把结论装成回调报文
+    （写实图是交业主的产物，场景包与五路是血缘原料，失败机位单列），再经 task-result-deliver
+    送出——**没送到不算完**（三张图线同口径）。SpaceRenderWorkflow 一行未动：那条是没有回调地址的
+    整份结论入口。
+    """
+
+    @workflow.run
+    async def run(self, spec: SpaceRenderDispatchSpec) -> SpaceRenderDispatchResult:
+        result = await run_space_render(spec, _render3d_step)
+        products = space_render_products(spec, result)
+        info = workflow.info()
+        payload = build_space_render_task_result(
+            spec, result, products=products, workflow_id=info.workflow_id, run_id=info.run_id
+        )
+        failed_checks = list(result.failed_checks)
+        delivered = await _deliver_task_result(
+            spec.result_callback_url, payload, spec.queues.genpipe, failed_checks
+        )
+        return SpaceRenderDispatchResult(
+            **result.model_dump(exclude={"failed_checks"}),
+            failed_checks=failed_checks,
+            products=products,
+            delivered=delivered,
+        )

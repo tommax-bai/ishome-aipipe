@@ -52,6 +52,8 @@ ALLOWED_VERTICAL_FILES = {
     "project_client.py",  # chat 出站边缘：project-svc REST 客户端（contracts project.v1）
     # 2026-09-05 三维线编排（与 workflows 同一条"无 IO"import-linter 契约）：
     "render3d_pipeline.py",  # genpipe 编排件：三维线（场景编译 → 底渲 → 写实化扇出）
+    # 2026-09-06 三维线派发形态（同一条"无 IO"契约；键形态已拍，见模块 docstring）：
+    "space_render_dispatch.py",  # genpipe 装配件：派发入参（+回调地址）与结论 → 回调报文
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：

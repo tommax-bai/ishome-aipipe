@@ -21,7 +21,9 @@ from genpipe.service import (
     start_gen_batch,
     start_generation_task,
     start_report_compose,
+    start_space_render,
 )
+from genpipe.space_render_dispatch import SpaceRenderDispatchSpec
 
 router = APIRouter(prefix="/api/v1/genpipe")
 
@@ -57,6 +59,17 @@ async def create_floorplan_visuals(spec: FloorplanVisualsSpec) -> WorkflowStartR
     （contracts genpipe.v1）。"""
     try:
         return await start_floorplan_visuals(spec)
+    except WorkflowAlreadyStartedError as err:
+        raise HTTPException(status_code=409, detail=f"task 已启动：{spec.task_id}") from err
+
+
+@router.post("/space-renders", status_code=202)
+async def create_space_render(spec: SpaceRenderDispatchSpec) -> WorkflowStartReceipt:
+    """三维线派发入口：project-svc 铸任务后调用，body 即 spec 原样透传
+    （contracts genpipe.v1 `/space-renders`）。入参不合格由 spec 的校验当场 422，
+    一步 activity 都不派。"""
+    try:
+        return await start_space_render(spec)
     except WorkflowAlreadyStartedError as err:
         raise HTTPException(status_code=409, detail=f"task 已启动：{spec.task_id}") from err
 

@@ -20,12 +20,14 @@ from genpipe.models import (
     ReportComposeSpec,
     WorkflowStartReceipt,
 )
+from genpipe.space_render_dispatch import SpaceRenderDispatchSpec
 from genpipe.workflows import (
     WORKFLOW_TASK_QUEUE,
     FloorplanVisualsWorkflow,
     GenBatchWorkflow,
     GenerationTaskWorkflow,
     ReportComposeWorkflow,
+    SpaceRenderDispatchWorkflow,
 )
 
 GENPIPE_NAMESPACE = "genpipe"
@@ -118,6 +120,25 @@ async def start_floorplan_visuals(spec: FloorplanVisualsSpec) -> WorkflowStartRe
         FloorplanVisualsWorkflow.run,
         spec,
         id=f"floorplan-visuals-{spec.task_id}",
+        task_queue=WORKFLOW_TASK_QUEUE,
+    )
+    receipt = WorkflowStartReceipt(workflow_id=handle.id, run_id=handle.result_run_id or "")
+    await repo.save_task_receipt(spec.task_id, receipt)
+    return receipt
+
+
+async def start_space_render(spec: SpaceRenderDispatchSpec) -> WorkflowStartReceipt:
+    """启动三维线派发 workflow（project-svc 铸任务后的派发入口，contracts genpipe.v1
+    `/space-renders`）。
+
+    与三张图线同一起法：启动即返回，workflow_id 以 task_id 定址（重复派发即冲突上抛）；
+    结论由 workflow 末尾的 `task-result-deliver` 按派发时注入的回调地址送回业务侧。
+    """
+    client = await get_temporal_client()
+    handle = await client.start_workflow(
+        SpaceRenderDispatchWorkflow.run,
+        spec,
+        id=f"space-render-{spec.task_id}",
         task_queue=WORKFLOW_TASK_QUEUE,
     )
     receipt = WorkflowStartReceipt(workflow_id=handle.id, run_id=handle.result_run_id or "")
