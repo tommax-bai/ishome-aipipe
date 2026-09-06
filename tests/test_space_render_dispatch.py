@@ -232,9 +232,8 @@ async def test_products_put_realism_as_deliverable_and_routes_as_lineage() -> No
         "revision_id": "rev-1",
     }
     realism = living["realism"]
-    assert realism.object_key.endswith(
-        "/cam-room-living/realism-cam-room-living-modern-minimal.png"
-    )
+    # 键末段只有风格模板 id，机位靠前缀那一段（用户裁决 2026-09-06"现在删掉"）
+    assert realism.object_key.endswith("/cam-room-living/realism-modern-minimal.png")
     assert realism.content_type == "image/png"
     assert realism.gen_params["style_template_id"] == "modern-minimal"
     assert realism.gen_params["control_key"].endswith("/cam-room-living/sketch.png")

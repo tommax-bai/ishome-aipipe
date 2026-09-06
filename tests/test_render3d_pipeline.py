@@ -109,12 +109,17 @@ def gate_rejected(camera_id: str) -> dict[str, Any]:
 
 
 def realism_ok(arg: Any) -> dict[str, Any]:
+    """imagegen realism-pass 的成功回执（mock）。
+
+    写实图键＝`{控制稿前缀}/realism-{style_template_id}.{ext}`——前缀末段已经是机位目录，文件名
+    里不再重复 `camera_id`（用户裁决 2026-09-06"现在删掉"）。键由 imagegen 铸，本仓只原样收下。
+    """
     source = arg.get("sketchKey") or arg["lineKey"]
     camera_id = arg["cameraId"]
-    prefix = source.rsplit("/", 1)[0]
+    prefix = source.rsplit("/", 1)[0]  # 形如 {PREFIX}/cam-room-living：机位段在前缀里
     return {
         "verdict": "ok",
-        "image_object_key": f"{prefix}/realism-{camera_id}-{arg['styleTemplateId']}.png",
+        "image_object_key": f"{prefix}/realism-{arg['styleTemplateId']}.png",
         "bucket": "ishome-private",
         "content_type": "image/png",
         "source_object_key": source,
@@ -224,9 +229,7 @@ async def test_three_cameras_one_lost_one_redispatched_one_straight_through() ->
     # 客厅：sketch 有就用 sketch；门禁一次不过，同样入参再派一次即过，次数记在结论里
     assert living.control_key.endswith("/cam-room-living/sketch.png")
     assert living.sketch_key is not None and living.gate_redispatches == 1
-    assert living.image_object_key.endswith(
-        "/cam-room-living/realism-cam-room-living-modern-minimal.png"
-    )
+    assert living.image_object_key.endswith("/cam-room-living/realism-modern-minimal.png")
     assert living.gate["passed"] is True and living.fidelity_score == 0.83
     assert living.evidence["backend_name"] == "wanx-sketch"
     assert living.evidence["prompt_sha256"] == "cafebabe"
@@ -639,9 +642,10 @@ async def test_fold_into_generation_task_result_keeps_image_keys_and_camera_fail
     folded = fold_space_render_result(result)
     assert folded.verdict == "passed"
     assert folded.task_id == "01J0SPACE"
-    assert [key.rsplit("/", 1)[1] for key in folded.artifact_ids] == [
-        "realism-cam-room-living-modern-minimal.png",
-        "realism-cam-room-bedroom-modern-minimal.png",
+    # 键末段不再带 camera_id，两台机位靠前缀里的机位目录区分（用户裁决 2026-09-06"现在删掉"）
+    assert ["/".join(key.rsplit("/", 2)[1:]) for key in folded.artifact_ids] == [
+        "cam-room-living/realism-modern-minimal.png",
+        "cam-room-bedroom/realism-modern-minimal.png",
     ]
     assert folded.failed_checks == [
         "cam-bird-dollhouse:base-render:"
