@@ -44,7 +44,8 @@
 像素，但相对尺度本身也只在一张图上验过。
 
 **2026-09-05 补**：第二批样本到了（138㎡ 彩色渲染户型图，1254×1254）。墙厚上限已改成随图实测
-（:data:`WALL_THICKNESS_STROKE_MULTIPLE`），格子墙占比按 92+138 两张 retune（:data:`MAX_CELL_WALL_RATIO`）——
+（:data:`WALL_THICKNESS_STROKE_MULTIPLE`），
+格子墙占比按 92+138 两张 retune（:data:`MAX_CELL_WALL_RATIO`）——
 这两条不再是单样本值；其余常量仍只在 92 上验过。
 """
 
@@ -123,7 +124,8 @@ MAX_CELL_WALL_RATIO = 0.50
 取 0.50 不 0.25：0.25 照 92㎡ 单图定，太严——贴着外墙那圈地板格里混进小半格墙带，
 就被判成"墙不是屋"，房间边界因此缩进一个墙厚、够不着外墙（138 闭合 67% 的另一半原因）。
 放到 0.50 后 138 闭合 0.67→0.98、92 也 0.937→0.963，两张都过。**这是 retune 不是公式**：
-只在 92+138 两张上验过、落在 0.45~0.60 都能过的平台中段，样本更多前不当定值（《纪律·阈值有数据才定》）。
+只在 92+138 两张上验过、落在 0.45~0.60 都能过的平台中段，
+样本更多前不当定值（《纪律·阈值有数据才定》）。
 """
 
 MIN_CELL_INSIDE_RATIO = 0.5
@@ -350,7 +352,8 @@ class _Grid:
             else MAX_WALL_THICKNESS_RATIO * self.plan_long_side_px
         )
         """墙厚上限（像素）：**给墙线定位用**——截面宽于此的暗条不投票（挡住路口那一坨、别投出假墙线）。
-        随图实测，见 :data:`WALL_THICKNESS_STROKE_MULTIPLE`。圈墙像素那步用兜底比例，见 :func:`_build_parallel_wall_mask`。"""
+        随图实测，见 :data:`WALL_THICKNESS_STROKE_MULTIPLE`。
+        圈墙像素那步用兜底比例，见 :func:`_build_parallel_wall_mask`。"""
         self.parallel_wall: dict[str, Bitmap] = {}
         """按轴向分开的墙体图：`parallel_wall["vertical"]` 里为真的像素属于一条**竖**墙。
 
