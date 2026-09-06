@@ -128,7 +128,7 @@ async def start_floorplan_visuals(spec: FloorplanVisualsSpec) -> WorkflowStartRe
 
 
 async def start_space_render(spec: SpaceRenderDispatchSpec) -> WorkflowStartReceipt:
-    """启动三维线派发 workflow（草案；project-svc 铸任务后的派发入口，contracts genpipe.v1
+    """启动三维线派发 workflow（project-svc 铸任务后的派发入口，contracts genpipe.v1
     `/space-renders`）。
 
     与三张图线同一起法：启动即返回，workflow_id 以 task_id 定址（重复派发即冲突上抛）；

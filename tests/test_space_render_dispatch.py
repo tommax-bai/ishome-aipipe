@@ -1,4 +1,4 @@
-"""三维线派发形态（草案）直测，不起 Temporal：
+"""三维线派发形态直测，不起 Temporal：
 
 入站面——`POST /space-renders` 挂在 app 上、body 原样到 service、重复派发 409、入参不合格 422；
 用例层——`start_space_render` 起的是 SpaceRenderDispatchWorkflow、以 task_id 定址（假 Temporal
@@ -340,7 +340,10 @@ def test_task_result_payload_folds_other_house_level_checks_into_failure_detail(
 
 
 def test_task_product_vocabulary_matches_contract_draft() -> None:
-    """产物词与 contracts genpipe.v1 `space_render_product` 草案逐字一致（产物名＝键的末段）。"""
+    """产物词与 contracts genpipe.v1 `space_render_product` 逐字一致（产物名＝键的末段）。
+
+    仍叫 draft：**字风格待拍**——这里 kebab-case（`mask-index`），三张图线
+    `floorplan_visuals_product` 是 snake_case。拍了统一成哪一种，这一串词就得整批换。"""
     for word in (
         "design-package",
         "scene-package",

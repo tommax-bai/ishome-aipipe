@@ -54,7 +54,7 @@ with workflow.unsafe.imports_passed_through():
         space_render_spec_from_task,
     )
 
-# 三维线派发形态（派发入参 + 回流装配，草案）：与 render3d_pipeline 同属可重放件，不 import Temporal
+# 三维线派发形态（派发入参 + 回流装配）：与 render3d_pipeline 同属可重放件，不 import Temporal
 with workflow.unsafe.imports_passed_through():
     from genpipe.space_render_dispatch import (
         SpaceRenderDispatchResult,
@@ -1201,7 +1201,7 @@ async def _deliver_task_result(
 
 @workflow.defn
 class SpaceRenderDispatchWorkflow:
-    """三维线的派发形态（草案）：project-svc 铸任务 → `POST /space-renders` → 本 workflow →
+    """三维线的派发形态：project-svc 铸任务 → `POST /space-renders` → 本 workflow →
     结论按派发时注入的回调地址送回业务侧。
 
     与 SpaceRenderWorkflow 跑同一条链（`run_space_render`），多做两件：把结论装成回调报文

@@ -1,4 +1,4 @@
-"""三维线的派发形态与结果回流装配（草案，等用户拍键形态与产物词表）。
+"""三维线的派发形态与结果回流装配。
 
 只装配，禁止任何 IO（与 `render3d_pipeline` 同一条可重放硬约束，import-linter 契约锁定）。
 
@@ -6,11 +6,22 @@
   回调地址随派发注入，编排侧不知业务侧在哪）。入口校验在此响亮失败：机位清单给了不许空、机位 id
   不许重、机位 id 与风格模板 id 要能当键的一段（imagegen `check_camera_id` 同款）、回调地址要是
   http(s) URL。
-- 回流产物词表 `SpaceRenderProduct`（contracts `openapi/genpipe.v1.yaml` `space_render_product`，
-  草案）：产物名＝键的末段（contracts `registries/render_products.md`），不另发前缀词表。
+- 回流产物词表 `SpaceRenderProduct`（contracts `openapi/genpipe.v1.yaml` `space_render_product`）：
+  产物名＝键的末段（contracts `registries/render_products.md`），不另发前缀词表。
 - 回调报文 `build_space_render_task_result`：project.v1 `generation_task_result` 同形态——写实图是
-  交业主的产物，场景包与底渲五路是血缘原料，都进 `products`；失败机位单列 `failed_cameras`
-  （本线新增字段，**待拍**：要不要进 project.v1）。
+  交业主的产物，场景包与底渲五路是血缘原料，都进 `products`；失败机位单列 `failed_cameras`。
+
+写实图键＝`{控制稿前缀}/realism-{style_template_id}.{ext}`：前缀末段已经是机位目录，文件名里不再
+重复 `camera_id`（用户裁决 2026-09-06"现在删掉"）。键由 imagegen 铸，本模块只原样转成产物条目。
+
+还等用户拍的三件（拍了要回改本文件与 contracts 同名处）：
+
+1. **产物词表的字风格**——本表 kebab-case（`mask-index`），三张图线 `floorplan_visuals_product` 是
+   snake_case，两线不一致；等的是统一成哪一种，还是各线各留。
+2. **`failed_cameras` 进不进 project.v1**——它是本线新增字段，`generation_task_result` 现在没有；
+   等的是业务侧那份契约收不收它，不收就得改成往别处塞。
+3. **写实图在业务侧的 `artifact_type` 建议名**——contracts `registries/render_products.md`
+   「回流词与 artifact_type 建议」给的是 `space_render`；映射表在 project-svc，等的是那个名定不定。
 """
 
 from __future__ import annotations
@@ -30,7 +41,10 @@ from genpipe.render3d_pipeline import (
 )
 
 KEY_SEGMENT_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-"""能当对象键一段的 id（imagegen `check_camera_id` 同款）：机位 id 与风格模板 id 都进写实图键。"""
+"""能当对象键一段的 id（imagegen `check_camera_id` 同款）。
+
+机位 id 与风格模板 id 都要过这一关：机位 id 是写实图键前缀里的那一段目录，风格模板 id 是文件名
+里的那一段（用户裁决 2026-09-06 后写实图键只剩这一个可变段）。"""
 
 SpaceRenderProduct = Literal[
     "design-package",
@@ -43,8 +57,10 @@ SpaceRenderProduct = Literal[
     "sketch",
     "realism",
 ]
-"""三维线交回的产物词表（contracts genpipe.v1 `space_render_product`，草案、只增不改）。
-`design-package` 是派发入参不是本线产物，本线不回流它；留在词表里给填包步进管线那一天用。"""
+"""三维线交回的产物词表（contracts genpipe.v1 `space_render_product`，只增不改）。
+
+`design-package` 是派发入参不是本线产物，本线不回流它；留在词表里给填包步进管线那一天用。
+**字风格待拍**（本模块 docstring 第 1 件）：这里是 kebab-case，三张图线是 snake_case。"""
 
 SPACE_RENDER_FAILED_CODE = "space-render-failed"
 """整户失败却没带 failure 时的兜底失败码（不该发生：`run_space_render` 失败路径都带 failure）。"""
@@ -219,7 +235,8 @@ def build_space_render_task_result(
     run_id: str,
 ) -> dict[str, Any]:
     """回调报文（纯函数）：contracts genpipe.v1 `space_render_result`——project.v1
-    `generation_task_result` 的字段逐字同形态，另加 `failed_cameras`。
+    `generation_task_result` 的字段逐字同形态，另加 `failed_cameras`（**待拍**：业务侧那份契约
+    收不收这个字段，见本模块 docstring 第 2 件）。
 
     `completed`＝至少一台机位出了写实图（`verdict=ok`）；失败机位照样单列，业务侧决定怎么告知。
     `failed`＝整户失败：`failure` 取编排结论的 {code, detail}，其余整户级失败码并进 detail

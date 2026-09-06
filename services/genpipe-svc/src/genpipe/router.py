@@ -65,7 +65,7 @@ async def create_floorplan_visuals(spec: FloorplanVisualsSpec) -> WorkflowStartR
 
 @router.post("/space-renders", status_code=202)
 async def create_space_render(spec: SpaceRenderDispatchSpec) -> WorkflowStartReceipt:
-    """三维线派发入口（草案）：project-svc 铸任务后调用，body 即 spec 原样透传
+    """三维线派发入口：project-svc 铸任务后调用，body 即 spec 原样透传
     （contracts genpipe.v1 `/space-renders`）。入参不合格由 spec 的校验当场 422，
     一步 activity 都不派。"""
     try:
