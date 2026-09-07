@@ -188,7 +188,8 @@ async def test_image_then_area_reports_key_then_area_and_inferred_ratio() -> Non
     }
 
 
-async def test_nothing_new_means_no_round_trip() -> None:
+async def test_chitchat_turn_means_no_round_trip() -> None:
+    """业主没再给新东西的那一轮（"嗯"）不往返——省的是那一跳无谓的往返与它连带的里程碑判定。"""
     business = FakeBusiness()
     sender = CapturingSender()
     llm = FakeLlm(
@@ -198,6 +199,31 @@ async def test_nothing_new_means_no_round_trip() -> None:
     await service.ingest_message(inbound_text("138平", "m-1"), sender, llm, business=business)
     await service.ingest_message(inbound_text("嗯", "m-2"), sender, llm, business=business)
     assert len(business.fills) == 1
+
+
+async def test_resending_the_same_floorplan_reports_again() -> None:
+    """重发同一张户型图必须再报一次（用户裁决 2026-09-07："重发一张图的话，就再来一次"）。
+
+    这是 2026-09-06 真机第三跑的门禁：生成失败后系统请业主重发，他重发了同一张图，
+    而户型图槽位的值是内容寻址的对象键、同一张图值恒等——按"值变没变"判就把这一轮整个滤空，
+    会话侧一个 HTTP 都没打。判据换成"他这一轮又给了没有"之后，这一跳必须发生。
+    """
+    business = FakeBusiness()
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")] * 2,
+        turns=[turn_json([], "收到图了。"), turn_json([], "再试一次。")],
+    )
+
+    await service.ingest_message(inbound_image("m-1"), sender, llm, business=business)
+    await service.ingest_message(inbound_image("m-2"), sender, llm, business=business)
+
+    assert len(business.fills) == 2
+    _, second_batch = business.fills[1]
+    # 值一模一样也照报；source_event_id 是这一轮的入站 message_id（契约不动）
+    assert [(s.slot_key, s.value, s.source_event_id) for s in second_batch] == [
+        ("floorplan", FLOORPLAN_KEY, "m-2")
+    ]
 
 
 async def test_owner_given_ratio_is_reported_as_observed() -> None:

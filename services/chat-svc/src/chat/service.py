@@ -9,8 +9,9 @@
 （裁决 8-31 原话"产出结果之后也告诉用户"）。确认闭环（清单 → user_confirmed 升级）
 机件保留，时点同样挪到真有产出可确认时——两处都不是删掉，是等它们该发生的那一刻。
 
-**2026-09-04 接线**：每轮回话之前把新到的事实（户型图对象键、建筑面积、按面积推的得房率）
-报给业务侧（`BusinessSideGateway`，contracts project.v1）——会话侧不判里程碑不建任务，
+**2026-09-04 接线**：每轮回话之前把业主这一轮给的事实（户型图对象键、建筑面积、按面积推的
+得房率）报给业务侧（`BusinessSideGateway`，contracts project.v1）——**他又给了一次就再报一次**，
+同一张户型图重发也算（判据全文在 `pending_slot_fills`）；会话侧不判里程碑不建任务，
 业务侧判定并派发三张图；图好了业务侧经 `PresentDeliverables` 回来，本层经渠道发进聊天线程，
 随后才说假设。上报失败对业主如实说（`REPORT_FAILED_MESSAGES`），事实留在快照里下一轮再报。
 
@@ -30,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -42,7 +43,7 @@ from ulid import ULID
 from chat import intent as intent_router
 from chat import orchestrator
 from chat.assumptions import DEFAULT_FLOOR_AREA_RATIO_PERCENT, assumption_messages, infer_from_area
-from chat.models import ChatMessage, ConversationRef, ConversationTurn, ProjectState
+from chat.models import ChatMessage, ConversationRef, ConversationTurn, Fact, ProjectState
 from chat.project_client import BusinessProject, MilestoneProgress, ProjectClientError, SlotFill
 from chat.repo import (
     append_history,
@@ -160,18 +161,27 @@ async def ingest_message(
     user_text = _inbound_text(inbound)
 
     try:
-        reply_texts, quick_reply_checklist = await _converse(
+        reply_texts, quick_reply_checklist, asserted_slot_keys = await _converse(
             inbound, project, conversation, user_text, llm, capability
         )
     except Exception:
         logger.exception("conversation turn failed: message_id=%s", inbound.message_id)
         reply_texts, quick_reply_checklist = [FALLBACK_REPLY], None
+        # 编排炸了走兜底话，但"他又发了一张图"这件事从入站消息本身就看得出来——
+        # 图那半照样算他这一轮给过，重发触发重跑不因为 LLM 那一步失败而丢
+        asserted_slot_keys = _inbound_asserted_slot_keys(inbound)
 
     # 上报业务侧：在回话之前——"开始设计"这句要建立在业务侧真的接了活的基础上。
     # 没接上就如实说（不装作在做），事实留在快照里下一轮再报。
     if business is not None:
         try:
-            await report_facts(conversation, project, business, source_event_id=inbound.message_id)
+            await report_facts(
+                conversation,
+                project,
+                business,
+                source_event_id=inbound.message_id,
+                asserted_slot_keys=asserted_slot_keys,
+            )
         except ProjectClientError:
             logger.exception("business-side report failed: message_id=%s", inbound.message_id)
             reply_texts = [*reply_texts, *REPORT_FAILED_MESSAGES]
@@ -188,11 +198,24 @@ async def ingest_message(
     return inbound.message_id
 
 
-def pending_slot_fills(project: ProjectState, *, source_event_id: str) -> list[SlotFill]:
-    """快照里有、还没报给业务侧（或值变了）的槽位（纯函数）。
+def pending_slot_fills(
+    project: ProjectState, *, source_event_id: str, asserted_slot_keys: Collection[str]
+) -> list[SlotFill]:
+    """快照里有、这一轮该报给业务侧的槽位（纯函数）。
 
     只报三样：户型图对象键、建筑面积（业主给的）、得房率（业主给的按 observed，没给按面积推
     为 inferred 的默认值——数字不由 LLM 决定，推的那一步在 `assumptions`）。业务侧判据只看前两样。
+
+    **报不报的判据是"业主这一轮又给了没有"，不是"值变没变"**（用户裁决 2026-09-07，
+    原话"好，重发一张图的话，就再来一次"）：户型图槽位的值是内容寻址的对象键，同一张图恒等于
+    同一个值——2026-09-06 真机第三跑没做出来，系统请业主重发，他 22:02 照做重发了同一张，
+    "值变没变"这个判据把这一轮整个滤空，会话侧一个 HTTP 都没打，静默吞掉。
+    `asserted_slot_keys` ＝ 这一轮入站里业主真正又断言了一次的槽位键（算法见
+    `_asserted_slot_keys`）；它以外仍按值变没变判，所以业主只回一句"好的"的闲聊轮
+    照旧不往返——省无谓往返（连带一次里程碑判定）那个原意没丢。
+
+    重报是安全的：业务侧 fill_slots 按槽位 upsert，判不判里程碑、铸不铸任务归它
+    （会话侧不判里程碑不建任务，红线）。
     """
     candidates: list[tuple[str, str, str]] = []
     object_key = orchestrator.find_floorplan_object_key(project)
@@ -211,8 +234,44 @@ def pending_slot_fills(project: ProjectState, *, source_event_id: str) -> list[S
     return [
         SlotFill(slot_key=key, value=value, cognitive_state=state, source_event_id=source_event_id)
         for key, value, state in candidates
-        if project.reported_slots.get(key) != value
+        if key in asserted_slot_keys or project.reported_slots.get(key) != value
     ]
+
+
+def _asserted_slot_keys(facts: Sequence[Fact]) -> set[str]:
+    """这批事实里，业主**这一轮又给了一次**的槽位键（纯函数）。
+
+    映射与 `orchestrator.find_*` 三个取值口径逐条对齐：认得出值的才算他给过——得房率填
+    "unknown" 那种不算，那时报上去的是按面积推的默认值，不是他给的。
+
+    **两半各有出处**：户型图那半由代码从入站消息本身认（他发的就是图，见
+    `_inbound_asserted_slot_keys`）；面积与得房率那半只能由 LLM 从这一轮文本里抽出来——
+    他说"还是138平"而模型这一轮没再抽出面积，就不算他又给了一次，那一轮按值变没变判（不往返）。
+    这不是漏，是"这一轮解析出来的事实"能给到的全部；要更牢的判据得让抽取那一步标出
+    "本轮触碰了哪些 fact_key"，眼下 `orchestrator.merge_facts` 只回结构类事实、给不出这个。
+    """
+    keys: set[str] = set()
+    for fact in facts:
+        numeric = isinstance(fact.value, int | float) and not isinstance(fact.value, bool)
+        if fact.target_id == "floorplan" and fact.property == "object_key" and fact.value:
+            keys.add("floorplan")
+        elif fact.property == "building_area_sqm" and numeric:
+            keys.add("building_area_sqm")
+        elif fact.target_id == "floorplan" and fact.property == "floor_area_ratio" and numeric:
+            keys.add("floor_area_ratio_percent")
+    return keys
+
+
+def _inbound_asserted_slot_keys(inbound: message_pb2.UnifiedMessage) -> set[str]:
+    """光看入站消息就断得出的槽位：他发来一张带对象键的图 ＝ 又给了一次户型图。
+
+    与 `_asserted_slot_keys` 分开写，因为**这一半不依赖编排**：这一轮 LLM 那步炸了走兜底话时，
+    "他重发了图"仍然成立，重跑不该跟着丢。渠道侧没落桶（没有对象键）的图不算——
+    没有键后面一步都做不了，那一轮本来也没有可报的东西。
+    """
+    if inbound.WhichOneof("content") != "image" or not inbound.image.object_key:
+        return set()
+    return {"floorplan"}
 
 
 async def report_facts(
@@ -221,16 +280,30 @@ async def report_facts(
     business: BusinessSideGateway,
     *,
     source_event_id: str,
+    asserted_slot_keys: Collection[str],
 ) -> MilestoneProgress | None:
-    """把新到的事实报给业务侧（contracts project.v1）。没有新东西就不打这一跳。
+    """把这一轮该报的事实报给业务侧（contracts project.v1）。没有该报的就不打这一跳。
+
+    该报的＝业主这一轮又给了一次的（`asserted_slot_keys`，重发同一张户型图也在内），
+    加上值确实变了的；判据全文见 `pending_slot_fills`。
 
     会话侧不判里程碑、不建任务：业务侧回来的 `created_task_ids` 只记日志，不据此改会话形态——
     图好没好，等它经 `PresentDeliverables` 回来。失败上抛 `ProjectClientError`，
     由调用方决定怎么对业主说；
     已报成功的槽位记进 `reported_slots`，重启丢了缓存也只是多报一次（业务侧 upsert 幂等）。
     """
-    fills = pending_slot_fills(project, source_event_id=source_event_id)
+    fills = pending_slot_fills(
+        project, source_event_id=source_event_id, asserted_slot_keys=asserted_slot_keys
+    )
     if not fills:
+        # 不往返的那一轮也要留一行：真机上这条路径整天一个字都不打，
+        # 排障时"业主重发了图却什么都没发生"在日志里根本看不见（2026-09-06）
+        logger.info(
+            "nothing to report, no round trip: event=%s asserted=%s reported=%s",
+            source_event_id,
+            sorted(asserted_slot_keys),
+            sorted(project.reported_slots),
+        )
         return None
     if project.business_project_id is None:
         business_project = await business.find_or_create_project(
@@ -397,16 +470,22 @@ async def _converse(
     user_text: str,
     llm: LlmCompletion,
     capability: CapabilityLookup | None,
-) -> tuple[list[str], str | None]:
-    """一轮会话：返回（文本回话列表, 需 quick_reply 形态发送的确认清单文本或 None）。"""
+) -> tuple[list[str], str | None, set[str]]:
+    """一轮会话：返回（文本回话列表, 需 quick_reply 形态发送的确认清单文本或 None,
+    业主这一轮又给了一次的槽位键）。
+
+    第三样是上报判据的入参（`pending_slot_fills`）：报什么由"他这一轮给了什么"定，
+    而这一轮解析出了哪些事实只有这儿知道——图那半看入站消息，面积/得房率那半看 LLM 抽的事实。
+    """
     checklist_open = bool(project.open_confirmation_ids)
     intent = await _route(inbound, user_text, llm, checklist_open=checklist_open)
 
     if intent == "confirm_checklist" and checklist_open:
         upgraded = orchestrator.upgrade_confirmed(project)
         logger.info("checklist confirmed: project=%s upgraded=%d", project.project_id, upgraded)
-        return [orchestrator.confirm_ack_text()], None
+        return [orchestrator.confirm_ack_text()], None, set()
 
+    asserted_slot_keys = _inbound_asserted_slot_keys(inbound)
     # 图片入站：先把"他传了户型图"记上再算缺口——否则这一轮还按"还没有图"问，
     # 而他刚传的就是图（真机上问出了"您家在哪个小区？几室几厅？"）
     if inbound.WhichOneof("content") == "image":
@@ -423,6 +502,7 @@ async def _converse(
 
     turn = await orchestrator.step(llm, project, await get_history(conversation), user_text)
     structural = orchestrator.merge_facts(project, turn.facts)
+    asserted_slot_keys |= _asserted_slot_keys(turn.facts)
     # 修正已确认信息 → 撤下确认标记，走重新确认回路
     if project.minimum_inputs_confirmed and any(
         f.cognitive_state != "user_confirmed" for f in orchestrator.confirmable_facts(project)
@@ -436,7 +516,7 @@ async def _converse(
         reply_texts = [*reply_texts, *orchestrator.structural_notes()]
 
     if orchestrator.missing_slots(project) or project.design_start_told:
-        return reply_texts, None
+        return reply_texts, None, asserted_slot_keys
 
     # 面积与户型图两样齐了：**只说开始设计**（用户 2026-08-31 晚纠正）。不出确认清单、
     # 不再要任何信息，也**不在这儿说按什么假设做的**——那套要等图送到业主手里之后才说
@@ -444,7 +524,7 @@ async def _converse(
     # 确认闭环那套机件同样没废，时点同样挪到真有产出可确认时。
     project.design_start_told = True
     logger.info("design start told: project=%s", project.project_id)
-    return [*reply_texts, *DESIGN_START_MESSAGES], None
+    return [*reply_texts, *DESIGN_START_MESSAGES], None, asserted_slot_keys
 
 
 def _pacing_seconds(previous_text: str) -> float:

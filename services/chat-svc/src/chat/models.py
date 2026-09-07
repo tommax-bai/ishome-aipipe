@@ -148,8 +148,12 @@ class ProjectState(BaseModel):
     缓存丢了（进程重启）就再按属主问一次：那一跳幂等。"""
 
     reported_slots: dict[str, str] = Field(default_factory=dict)
-    """已经报给业务侧的槽位 → 值。只报新的或变了的：业务侧那边 upsert 本就幂等，这里省的是
-    每轮一次无谓的往返（以及它连带的一次里程碑判定）。"""
+    """已经报给业务侧的槽位 → 值。
+
+    **它只管业主这一轮没再给的那些槽位**：他又给了一次的照报不误（重发同一张户型图＝再来一次，
+    用户裁决 2026-09-07），值一样也报——判据全文在 `service.pending_slot_fills`。
+    留着它是为了让业主只回一句"好的"的闲聊轮不往返：业务侧那边 upsert 本就幂等，
+    这里省的是那一轮无谓的往返（以及它连带的一次里程碑判定）。"""
 
     deliveries_seen: list[str] = Field(default_factory=list)
     """已经发过的送达标识（delivery_id）：业务侧中继重投时不在聊天线程里发第二遍。"""
