@@ -90,6 +90,67 @@ async def test_find_or_create_and_fill_slots_send_contract_shaped_bodies() -> No
     assert progress.advanced and progress.created_task_ids == ["01TASK"]
 
 
+async def test_find_or_create_brings_back_existing_slots() -> None:
+    """按属主取项目那一跳把项目上已有的槽位一并带回（契约 `project_summary.slots`）——
+    会话侧重启后"业主已经给过什么"就靠它读回来。形态不认识的单条跳过，不整跳失败。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "project_id": "01PROJ",
+                "current_milestone": "M0",
+                "process_version": "v1",
+                "created": False,
+                "slots": [
+                    {
+                        "slot_key": "building_area_sqm",
+                        "value": "138",
+                        "cognitive_state": "observed",
+                        "source_event_id": "m-0906",
+                        "confidence": 0.9,
+                    },
+                    {"slot_key": "floor_area_ratio_percent", "value": "80"},
+                    {"slot_key": "broken"},
+                ],
+            },
+        )
+
+    async with _client(httpx.MockTransport(handler)) as client:
+        project = await client.find_or_create_project(
+            channel_type_pb2.CHANNEL_TYPE_MOCK, "mock:local", "ou_1"
+        )
+
+    assert [(s.slot_key, s.value, s.cognitive_state) for s in project.slots] == [
+        ("building_area_sqm", "138", "observed"),
+        ("floor_area_ratio_percent", "80", ""),
+    ]
+    assert project.slots[0].source_event_id == "m-0906"
+    assert project.slots[0].confidence == 0.9
+    assert project.slots[1].confidence == 1.0
+
+
+async def test_find_or_create_without_slots_field_is_empty_not_a_failure() -> None:
+    """回执里没有 slots 就是没有槽位，这一跳照样成立（字段只增不删，老一版服务也接得住）。"""
+    async with _client(
+        httpx.MockTransport(
+            lambda r: httpx.Response(
+                200,
+                json={
+                    "project_id": "01PROJ",
+                    "current_milestone": "M0",
+                    "process_version": "v1",
+                    "created": True,
+                },
+            )
+        )
+    ) as client:
+        project = await client.find_or_create_project(
+            channel_type_pb2.CHANNEL_TYPE_MOCK, "mock:local", "ou_1"
+        )
+    assert project.slots == ()
+
+
 async def test_non_2xx_and_transport_errors_fail_loud() -> None:
     async with _client(
         httpx.MockTransport(lambda r: httpx.Response(404, json={"detail": "项目不存在"}))

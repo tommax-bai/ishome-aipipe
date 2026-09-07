@@ -12,13 +12,14 @@ from typing import Any, cast
 
 import grpc
 import pytest
-from chat import service
+from chat import orchestrator, service
 from chat.assumptions import DEFAULT_FLOOR_AREA_RATIO_PERCENT
 from chat.channel_client import ChannelClient
 from chat.grpc_server import build_server
 from chat.models import ConversationRef
 from chat.project_client import (
     BusinessProject,
+    BusinessSlot,
     MilestoneProgress,
     ProjectClientError,
     SlotFill,
@@ -63,10 +64,16 @@ class CapturingSender:
 
 
 class FakeBusiness:
-    """记录上报的假业务侧；可设为当场失败。"""
+    """记录上报的假业务侧；可设为当场失败，也可预置"表里本来就有的槽位"。
 
-    def __init__(self, *, failing: bool = False) -> None:
+    `existing_slots` ＝ 业主此前给过、已经落在业务侧真相里的那些——会话侧重启后按属主问回来的就是它。
+    """
+
+    def __init__(
+        self, *, failing: bool = False, existing_slots: Sequence[BusinessSlot] = ()
+    ) -> None:
         self.failing = failing
+        self.existing_slots = tuple(existing_slots)
         self.find_calls: list[tuple[int, str, str]] = []
         self.fills: list[tuple[str, list[SlotFill]]] = []
 
@@ -76,7 +83,13 @@ class FakeBusiness:
         if self.failing:
             raise ProjectClientError("业务侧连不上（测试）")
         self.find_calls.append((channel_type, channel_instance, external_user_id))
-        return BusinessProject("01PROJ", "M0", "v1", created=not self.find_calls[:-1])
+        return BusinessProject(
+            "01PROJ",
+            "M0",
+            "v1",
+            created=not self.find_calls[:-1],
+            slots=self.existing_slots,
+        )
 
     async def fill_slots(self, project_id: str, slots: Sequence[SlotFill]) -> MilestoneProgress:
         if self.failing:
@@ -274,8 +287,69 @@ async def test_image_without_object_key_is_recorded_but_not_reported() -> None:
     await service.ingest_message(
         inbound_image("m-1", object_key=None), sender, llm, business=business
     )
+    # 没有对象键就没有可报的事实：一条槽位都不报。
+    # 按属主那一跳照打——它是每轮开头"业主已经给过什么"的读面，与报不报无关。
     assert business.fills == []
-    assert business.find_calls == []
+    assert len(business.find_calls) == 1
+
+
+async def test_restart_does_not_ask_again_what_the_owner_already_answered() -> None:
+    """重启后（＝会话快照为空）业主发图，不再问他已经回答过的面积。
+
+    2026-09-06 19:59 业主说过"138 平米，81% 得房率"，落进了业务侧真相；9-07 部署重启后他重发
+    户型图，系统又问了一遍"这套房的建筑面积是多少平方米"——他当场说"不应该再出现咨询我建筑面积
+    的情况"。会话快照是进程内的、重启即空，槽位真相一直在业务侧表里：算缺口之前先向它要一次。
+
+    **编排模型这一轮一次都不该调**（`turns=[]`：真调了就 IndexError，兜底话会顶掉那一句）——
+    两样齐了那一轮由系统文案接管，模型没有产回复的位置也就问不出话来（裁决 9-07）。
+    """
+    business = FakeBusiness(
+        existing_slots=[
+            BusinessSlot("building_area_sqm", "138", "observed", "m-0906"),
+            BusinessSlot("floor_area_ratio_percent", "81", "observed", "m-0906"),
+        ]
+    )
+    sender = CapturingSender()
+    llm = FakeLlm(intents=[intent_json("provide_info")], turns=[])
+
+    await service.ingest_message(inbound_image("m-1"), sender, llm, business=business)
+
+    texts = [m.text.text for m in sender.sent if m.WhichOneof("content") == "text"]
+    assert texts == [service.DESIGN_START_MESSAGES[0]]
+    assert not any("面积" in t for t in texts)
+    # 读回来的算已经报过：这一轮只报他又给了一次的那张图
+    assert len(business.find_calls) == 1
+    assert [(s.slot_key, s.value) for _, batch in business.fills for s in batch] == [
+        ("floorplan", FLOORPLAN_KEY)
+    ]
+
+
+async def test_business_side_inferred_ratio_is_not_restored_as_the_owners_word() -> None:
+    """按面积推的得房率是我们自己填进业务侧的，读回来不能当成业主说过的话。
+
+    还原成 observed 事实等于把自己的猜测洗成他的话（《纪律·拿不到就说没有，不许填猜的值》）。
+    不还原也不会招来重复上报——`reported_slots` 里记着，值一样就不再往返。
+    """
+    business = FakeBusiness(
+        existing_slots=[
+            BusinessSlot("building_area_sqm", "138", "observed"),
+            BusinessSlot(
+                "floor_area_ratio_percent", str(DEFAULT_FLOOR_AREA_RATIO_PERCENT), "inferred"
+            ),
+        ]
+    )
+    sender = CapturingSender()
+    llm = FakeLlm(intents=[intent_json("provide_info")], turns=[])
+
+    await service.ingest_message(inbound_image("m-1"), sender, llm, business=business)
+
+    project = await find_or_create_project(conversation_ref())
+    assert orchestrator.find_building_area_sqm(project) == 138
+    assert orchestrator.find_floor_area_ratio_percent(project) is None
+    assert project.reported_slots["floor_area_ratio_percent"] == str(
+        DEFAULT_FLOOR_AREA_RATIO_PERCENT
+    )
+    assert [s.slot_key for _, batch in business.fills for s in batch] == ["floorplan"]
 
 
 async def test_without_business_gateway_nothing_is_reported() -> None:

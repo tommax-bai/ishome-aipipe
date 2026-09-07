@@ -3,6 +3,10 @@
 会话侧只做两件事：把事实上报、把产物呈现。本模块是"上报"那一跳——会话侧不判里程碑、不建任务，
 它把"业主传了户型图（在这个键）、说了建筑面积"这两件事交给业务侧，业务侧判定并派发。
 
+**这一跳也是会话侧唯一的读面**：按属主取项目那一下（`find_or_create_project`）连项目上已有的槽位
+一起回来（契约 `project_summary.slots`）。会话态只活在会话侧进程里、重启即失，槽位真相一直在
+业务侧的表里——业主说过的话该向真相属主要，不是自己在内存里记着。
+
 依赖方向（import-linter 锁定）：本模块只依赖运行库（httpx）与 contracts 生成的枚举，不感知上层——
 由组合根（grpc_server.serve）注入 service 层的协议位。联调契约：project-svc 默认
 http://127.0.0.1:8103（env `PROJECT_HTTP_BASE_URL` 覆盖）。
@@ -13,6 +17,7 @@ http://127.0.0.1:8103（env `PROJECT_HTTP_BASE_URL` 覆盖）。
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -21,6 +26,8 @@ from typing import Any
 
 import httpx
 from ishome.common.v1 import channel_type_pb2
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PROJECT_HTTP_BASE_URL = "http://127.0.0.1:8103"
 _TIMEOUT_SECONDS = 15.0
@@ -34,11 +41,29 @@ class ProjectClientError(Exception):
 
 
 @dataclass(frozen=True)
+class BusinessSlot:
+    """业务侧表里现有的一条槽位（contracts project.v1 `project_slot`）。
+
+    与 `SlotFill` 同名同义、各归各用：那个是"这一次报什么"，这个是"现在真相里是什么"。
+    `cognitive_state` 原样带回——它是"这个值是谁给的"，会话侧据此判要不要把它当成业主说过的话
+    （按面积推的默认得房率是我们自己填的，不能读回来当成他说的）。
+    """
+
+    slot_key: str
+    value: str
+    cognitive_state: str
+    source_event_id: str | None = None
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
 class BusinessProject:
     project_id: str
     current_milestone: str
     process_version: str
     created: bool
+    slots: tuple[BusinessSlot, ...] = ()
+    """项目上已有的全部槽位；新建的项目为空。"""
 
 
 @dataclass(frozen=True)
@@ -59,6 +84,38 @@ class MilestoneProgress:
     advanced: bool
     entered_milestones: list[str] = field(default_factory=list)
     created_task_ids: list[str] = field(default_factory=list)
+
+
+def _parse_slots(raw: object) -> tuple[BusinessSlot, ...]:
+    """回执里的 `slots`（契约 `project_slot` 列表）→ 领域形态。
+
+    **形态不对的单条跳过，不整跳失败**：这一跳的主职是取项目 id，槽位是搭着回来的；
+    一条读不懂就当业务侧没有它——最坏是多问一句，而整跳炸掉是这一轮一个字都回不出去。
+    读不懂的记一条日志，不猜（《纪律·拿不到就说没有，不许填猜的值》）。
+    """
+    if not isinstance(raw, list):
+        return ()
+    slots: list[BusinessSlot] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        slot_key, value = item.get("slot_key"), item.get("value")
+        cognitive_state = item.get("cognitive_state")
+        if not isinstance(slot_key, str) or not isinstance(value, str):
+            logger.warning("业务侧回来的槽位形态不认识，跳过：%s", str(item)[:200])
+            continue
+        source_event_id = item.get("source_event_id")
+        confidence = item.get("confidence")
+        slots.append(
+            BusinessSlot(
+                slot_key=slot_key,
+                value=value,
+                cognitive_state=cognitive_state if isinstance(cognitive_state, str) else "",
+                source_event_id=source_event_id if isinstance(source_event_id, str) else None,
+                confidence=float(confidence) if isinstance(confidence, int | float) else 1.0,
+            )
+        )
+    return tuple(slots)
 
 
 def channel_type_registry_id(channel_type: int) -> str:
@@ -102,6 +159,7 @@ class ProjectClient:
             current_milestone=str(payload.get("current_milestone") or ""),
             process_version=str(payload.get("process_version") or ""),
             created=bool(payload.get("created")),
+            slots=_parse_slots(payload.get("slots")),
         )
 
     async def fill_slots(self, project_id: str, slots: Sequence[SlotFill]) -> MilestoneProgress:

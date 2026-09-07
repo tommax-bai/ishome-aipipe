@@ -145,10 +145,13 @@ class ProjectState(BaseModel):
 
     business_project_id: str | None = None
     """业务侧（project-svc）的项目 id——会话侧上报事实用的定址，由业务侧按属主铸、本侧缓存。
-    缓存丢了（进程重启）就再按属主问一次：那一跳幂等。"""
+
+    缓存丢了（进程重启）就再按属主问一次：那一跳幂等，且**回执连项目上已有的槽位一起带回来**
+    （`service.restore_known_slots`）——本快照里的事实随进程消失，槽位真相不会。"""
 
     reported_slots: dict[str, str] = Field(default_factory=dict)
-    """已经报给业务侧的槽位 → 值。
+    """业务侧那边已经有的槽位 → 值。**两个来源**：这一轮报上去的，与开头从业务侧读回来的
+    （`service.adopt_business_project`）——业务侧表里已经有了，再报一遍没有增量意义。
 
     **它只管业主这一轮没再给的那些槽位**：他又给了一次的照报不误（重发同一张户型图＝再来一次，
     用户裁决 2026-09-07），值一样也报——判据全文在 `service.pending_slot_fills`。

@@ -17,6 +17,11 @@
 业务侧判定并派发三张图；图好了业务侧经 `PresentDeliverables` 回来，本层经渠道发进聊天线程，
 随后才说假设。上报失败对业主如实说（`REPORT_FAILED_MESSAGES`），事实留在快照里下一轮再报。
 
+**2026-09-07 补的读那一半**：每轮开头、算"还缺什么"之前，先向业务侧要一次这个项目上已有的槽位
+（`restore_known_slots`），把它们还原进会话快照。会话态是进程内的、重启即空，而槽位真相一直在
+业务侧表里——9-06 业主给过建筑面积，9-07 重启后又被问了一遍。会话侧不自己给会话态加持久化，
+它向真相属主要。
+
 存储：`CHAT_DATABASE_URL` 设置时消息原文落 PG（schema svc_chat），未设时内存
 （e2e-mock-smoke 裸起可跑）——选择在 repo 层，本层不感知。会话态（项目快照/
 上下文历史）为进程内缓存，Redis 接入位在 repo.SessionCache。
@@ -45,8 +50,21 @@ from ulid import ULID
 from chat import intent as intent_router
 from chat import orchestrator
 from chat.assumptions import DEFAULT_FLOOR_AREA_RATIO_PERCENT, assumption_messages, infer_from_area
-from chat.models import ChatMessage, ConversationRef, ConversationTurn, Fact, ProjectState
-from chat.project_client import BusinessProject, MilestoneProgress, ProjectClientError, SlotFill
+from chat.models import (
+    ChatMessage,
+    ConversationRef,
+    ConversationTurn,
+    Fact,
+    ProjectState,
+    fact_key,
+)
+from chat.project_client import (
+    BusinessProject,
+    BusinessSlot,
+    MilestoneProgress,
+    ProjectClientError,
+    SlotFill,
+)
 from chat.repo import (
     append_history,
     find_or_create_project,
@@ -61,6 +79,9 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_REPLY = "这条我没处理好，麻烦再发一次。"
 """LLM 或编排故障时的兜底回话——每条入站必有一条出站（E2E 不变量）。"""
+
+_RESTORED_FACT_SOURCE = "project_svc_slot"
+"""从业务侧读回来的事实的来源标记：这条不是这一轮听来的，是真相属主那儿取的。"""
 
 DESIGN_START_MESSAGES: tuple[str, ...] = ("我这就为你做设计，请稍等。",)
 """两样齐了那一轮，业主收到的**全部就是这一句**（用户裁决 2026-09-07）。
@@ -172,6 +193,14 @@ async def ingest_message(
     project = await find_or_create_project(conversation)
     user_text = _inbound_text(inbound)
 
+    # 算"还缺什么"之前先向业务侧要一次已有的槽位——会话快照是进程内的，重启即空，
+    # 而业主说过的话在业务侧表里躺着。要不到就照旧往下走（多问一句，好过这一轮回不出话）。
+    if business is not None:
+        try:
+            await restore_known_slots(conversation, project, business)
+        except ProjectClientError:
+            logger.exception("known-slot restore failed: message_id=%s", inbound.message_id)
+
     try:
         reply_texts, quick_reply_checklist, asserted_slot_keys = await _converse(
             inbound, project, conversation, user_text, llm, capability
@@ -208,6 +237,121 @@ async def ingest_message(
     )
     await save_project(conversation, project)
     return inbound.message_id
+
+
+async def restore_known_slots(
+    conversation: ConversationRef,
+    project: ProjectState,
+    business: BusinessSideGateway,
+) -> bool:
+    """向业务侧要一次这个项目上已有的槽位，还原进会话快照。返回这一轮有没有真去要。
+
+    **为什么要有这一跳**：会话快照（业主说过什么、缺口还剩哪个）只活在本进程内存里，一次部署重启
+    就全没了；而槽位真相一直在业务侧的表里。2026-09-06 19:59 业主说过"138 平米、81% 得房率"，
+    9-07 重启后他重发户型图，系统又问了一遍"这套房的建筑面积是多少"——他当场说
+    "不应该再出现咨询我建筑面积的情况"。**业务侧本来就是项目唯一真相，会话侧该向它要**。
+
+    **只在快照还不认得业务侧项目时要一次**（`business_project_id` 为空＝进程刚重启、或这条会话
+    第一次说话）：这之后这一轮之内的事实都在快照里，每轮都问是白打一跳。
+
+    **这一跳会顺带在业务侧建项**（`find_or_create_project` 的语义）：以前是"有事实要报了才建"，
+    现在是"业主一开口就建"。代价是给只说了句话就走的人也留一个项目行——业务侧新建项目停在首个
+    里程碑、不铸任何任务（backend `projectStartsAtM0WithoutTasks`），会话侧照旧不判里程碑不建任务。
+    """
+    if project.business_project_id is not None:
+        return False
+    business_project = await business.find_or_create_project(
+        conversation.channel_type, conversation.channel_instance, conversation.external_user_id
+    )
+    adopt_business_project(project, business_project)
+    return True
+
+
+def adopt_business_project(project: ProjectState, business_project: BusinessProject) -> list[str]:
+    """把业务侧回来的项目认下来：记住项目 id，把它表里已有的槽位还原进快照。返回还原了哪些槽位键。
+
+    **读回来的一律算"已经报过"**（进 `reported_slots`）：业务侧表里已经有了，再报一遍没有增量。
+    这与"业主这一轮又给了就再报一次"不冲突——那条判据是 `asserted_slot_keys`，它压过这里
+    （判据全文见 `pending_slot_fills`）。
+
+    **快照里已经有的那条事实不被覆盖**：业主这一轮刚说"其实是 140 平"，业务侧表里还是 138——
+    还原是补空位，不是拿旧值盖新话。
+    """
+    project.business_project_id = business_project.project_id
+    known_keys = {fact_key(f) for f in project.base_facts.facts}
+    restored: list[Fact] = []
+    for slot in business_project.slots:
+        project.reported_slots[slot.slot_key] = slot.value
+        restored.extend(f for f in _restored_facts(slot) if fact_key(f) not in known_keys)
+    if restored:
+        orchestrator.merge_facts(project, restored)
+    logger.info(
+        "business project %s: id=%s milestone=%s slots=%s restored_facts=%s",
+        "created" if business_project.created else "found",
+        business_project.project_id,
+        business_project.current_milestone,
+        [slot.slot_key for slot in business_project.slots],
+        [fact_key(f) for f in restored],
+    )
+    return [slot.slot_key for slot in business_project.slots]
+
+
+def _restored_facts(slot: BusinessSlot) -> list[Fact]:
+    """业务侧一条槽位 → 会话侧的事实（纯函数）。三样之外的槽位不还原：会话侧的缺口只认这三样。
+
+    **口径与 `pending_slot_fills` 那三样逐条对着**（报出去什么形态，读回来就还原成什么）：
+    户型图那条还原两件——"有图"与"图在哪"，因为 `orchestrator.missing_slots` 判的是前者、
+    整条线的入参是后者。
+
+    **按面积推的得房率不还原**（只收 observed）：那个值是我们自己填进去的默认，读回来当成
+    "业主说的"就等于把自己的猜测洗成他的话（《纪律·拿不到就说没有，不许填猜的值》）。
+    不还原它照样不会被重复上报——`reported_slots` 里记着，值一样就不再往返。
+    """
+    match slot.slot_key:
+        case "floorplan":
+            return [
+                orchestrator.upload_object_key_fact(slot.value),
+                orchestrator.upload_fact(),
+            ]
+        case "building_area_sqm":
+            number = _parse_number(slot)
+            if number is None:
+                return []
+            return [
+                Fact(
+                    target_id="floorplan",
+                    property="building_area_sqm",
+                    value=number,
+                    unit="sqm",
+                    cognitive_state="observed",
+                    source=_RESTORED_FACT_SOURCE,
+                )
+            ]
+        case "floor_area_ratio_percent" if slot.cognitive_state == "observed":
+            number = _parse_number(slot)
+            if number is None:
+                return []
+            return [
+                Fact(
+                    target_id="floorplan",
+                    property="floor_area_ratio",
+                    value=number,
+                    unit="percent",
+                    cognitive_state="observed",
+                    source=_RESTORED_FACT_SOURCE,
+                )
+            ]
+        case _:
+            return []
+
+
+def _parse_number(slot: BusinessSlot) -> float | None:
+    """槽位的值是字面字符串（契约如此）；读不成数就当没有，不猜一个。"""
+    try:
+        return float(slot.value)
+    except ValueError:
+        logger.warning("业务侧槽位 %s 的值不是数：%s", slot.slot_key, slot.value[:100])
+        return None
 
 
 def pending_slot_fills(
@@ -301,8 +445,8 @@ async def report_facts(
 
     会话侧不判里程碑、不建任务：业务侧回来的 `created_task_ids` 只记日志，不据此改会话形态——
     图好没好，等它经 `PresentDeliverables` 回来。失败上抛 `ProjectClientError`，
-    由调用方决定怎么对业主说；
-    已报成功的槽位记进 `reported_slots`，重启丢了缓存也只是多报一次（业务侧 upsert 幂等）。
+    由调用方决定怎么对业主说；已报成功的槽位记进 `reported_slots`，重启丢了这份缓存也不要紧——
+    下一轮开头 `restore_known_slots` 从业务侧读回来（读不回来最坏也只是多报一次，upsert 幂等）。
     """
     fills = pending_slot_fills(
         project, source_event_id=source_event_id, asserted_slot_keys=asserted_slot_keys
@@ -318,16 +462,10 @@ async def report_facts(
         )
         return None
     if project.business_project_id is None:
-        business_project = await business.find_or_create_project(
-            conversation.channel_type, conversation.channel_instance, conversation.external_user_id
-        )
-        project.business_project_id = business_project.project_id
-        logger.info(
-            "business project %s: id=%s milestone=%s",
-            "created" if business_project.created else "found",
-            business_project.project_id,
-            business_project.current_milestone,
-        )
+        # 这一轮开头那次还原没成（业务侧当时没接上）：这儿补上，顺带把已有槽位也认下来
+        await restore_known_slots(conversation, project, business)
+    if project.business_project_id is None:
+        raise ProjectClientError("业务侧没给出项目 id，这批事实没处报")
     progress = await business.fill_slots(project.business_project_id, fills)
     for fill in fills:
         project.reported_slots[fill.slot_key] = fill.value
