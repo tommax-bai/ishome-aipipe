@@ -2,8 +2,10 @@
 
 流程：入站落存（svc_chat.messages，幂等键防重存兼去重门）→ 输入归一化
 （v1：quick_reply 直通；TODO(normalize) 多消息聚合、语音转文字）→ Intent Router
-→ Orchestrator（事实抽取 + 回复）→ 两样（面积 + 户型图）齐了说"开始设计"
-→ 出站回话（发送后落存出站原文）。
+→ Orchestrator（事实抽取 + 回复）→ 出站回话（发送后落存出站原文）。
+**两样（面积 + 户型图）齐了那一轮是个岔路**：由系统文案接管说一句"我这就为你做设计"，
+模型写的回复不出现在这一轮——它没有产回复的位置，也就问不出话来（裁决 9-07，见
+`DESIGN_START_MESSAGES` 与 `_design_start_due`）。
 
 **假设那套不在这条流程里**：它由 `deliverables_delivered` 在图送回业主之后主动发
 （裁决 8-31 原话"产出结果之后也告诉用户"）。确认闭环（清单 → user_confirmed 升级）
@@ -60,15 +62,25 @@ logger = logging.getLogger(__name__)
 FALLBACK_REPLY = "这条我没处理好，麻烦再发一次。"
 """LLM 或编排故障时的兜底回话——每条入站必有一条出站（E2E 不变量）。"""
 
-DESIGN_START_MESSAGES: tuple[str, ...] = (
-    "面积和户型图都齐了，我这就开始给你做设计。",
-    "做好了我直接把图发过来，你先不用再准备什么。",
-)
-"""两样齐了那一轮只说这一件事：**开始设计**（用户 2026-08-31 晚纠正）。
+DESIGN_START_MESSAGES: tuple[str, ...] = ("我这就为你做设计，请稍等。",)
+"""两样齐了那一轮，业主收到的**全部就是这一句**（用户裁决 2026-09-07）。
+
+**一句话说得完就不说三句**：不复述他刚给的、不播报进度、不交代后续。用户原话——
+"这是三段话说的太冗余了，我们只需要回复一句，我这就为您做设计，请稍等就可以了"；
+同日他给的射程更宽的原则是"不应该过多的解释非必要和客户咨询的问题，给最直接简要的回答"
+（那条管住模型的那一格，落在 `orchestrator._SYSTEM_PROMPT` 里）。
+此前是两条（"面积和户型图都齐了…" + "做好了我直接把图发过来…"），一条复述一条交代，
+业主两样都不需要。
+
+**这一轮不调编排模型**（`_converse` 里 `_design_start_due` 那两支）：模型根本没有产回复的
+位置，"缺口为空还提问"就从提示词纪律变成了结构——结构上问不出来。判据是 9-01 写死的
+"真机再出现一次就做"，9-07 真机第二次出现（"您方便说说家里常住几口人？"）。
 
 **这里一个假设都不提**：假设那套要等图发到业主手里之后才说（`deliverables_delivered`）。
 真机上图还没影，业主先收到"我按 4 个人来安排"——他不知道这是在说哪份东西。
-第二条也**不再向他要任何信息**：说清"你不用再准备什么"，比只在提示词里禁止追问更牢靠。
+
+**称呼统一用"你"**：本仓发给业主的固定文案（失败话、随图说明、假设说明）一律"你"，
+不一处"您"一处"你"。
 """
 
 REPORT_FAILED_MESSAGES: tuple[str, ...] = (
@@ -476,6 +488,13 @@ async def _converse(
 
     第三样是上报判据的入参（`pending_slot_fills`）：报什么由"他这一轮给了什么"定，
     而这一轮解析出了哪些事实只有这儿知道——图那半看入站消息，面积/得房率那半看 LLM 抽的事实。
+
+    **两样齐了那一轮由系统文案接管，模型的回复不出现在这一轮**（用户裁决 2026-09-07）：
+    分两支落，因为缺口是被谁补上的不一样——他这一轮传的图由代码记（`upload_object_key_fact`），
+    这一支在 `orchestrator.step` **之前**判，模型连调都不调；面积只能由模型从这一轮文本里抽，
+    那一支只好在 step 之后判，抽完了把它写的回复整批作废。两支的出站都是那一句
+    （`DESIGN_START_MESSAGES`），只有结构说明是例外——它是红线 §8.3 要求附的两条路径，
+    不是对他上一句的回应，他这一轮真提了承重墙就仍要说。
     """
     checklist_open = bool(project.open_confirmation_ids)
     intent = await _route(inbound, user_text, llm, checklist_open=checklist_open)
@@ -500,6 +519,11 @@ async def _converse(
             )
         orchestrator.merge_facts(project, facts)
 
+    # 他这一轮传的图刚把最后一个缺口补上：**模型这一轮一次都不调**，它没有产回复的位置，
+    # 也就问不出话来（用户裁决 2026-09-07）。代价写在明处＝这一轮不回应他上一句说了什么。
+    if _design_start_due(project):
+        return _design_start_texts(project), None, asserted_slot_keys
+
     turn = await orchestrator.step(llm, project, await get_history(conversation), user_text)
     structural = orchestrator.merge_facts(project, turn.facts)
     asserted_slot_keys |= _asserted_slot_keys(turn.facts)
@@ -509,22 +533,39 @@ async def _converse(
     ):
         project.minimum_inputs_confirmed = False
 
+    if _design_start_due(project):
+        # 缺口是这一轮模型抽出的面积补上的（9-07 真机那一轮就是这样）：**它写的回复整批作废**。
+        # 留着正好是被吐槽的那三条——复述、进度播报，外加那个不该问的问题。
+        # 结构说明是例外：它是红线 §8.3 要求随回复附的两条路径，不是对他上一句的回应。
+        notes = orchestrator.structural_notes() if structural else []
+        return [*notes, *_design_start_texts(project)], None, asserted_slot_keys
+
     reply_texts = turn.replies or [FALLBACK_REPLY]
     if structural:
         # 结构说明**自成两条**，不再拼在回话尾巴上：拒绝是一件事、两条出路是另一件事，
         # 而拼上去正好把那一条撑成真机上被吐槽的长文（用户 2026-08-31）
         reply_texts = [*reply_texts, *orchestrator.structural_notes()]
+    return reply_texts, None, asserted_slot_keys
 
-    if orchestrator.missing_slots(project) or project.design_start_told:
-        return reply_texts, None, asserted_slot_keys
 
-    # 面积与户型图两样齐了：**只说开始设计**（用户 2026-08-31 晚纠正）。不出确认清单、
-    # 不再要任何信息，也**不在这儿说按什么假设做的**——那套要等图送到业主手里之后才说
-    # （`deliverables_delivered`），裁决原话就是"产出结果之后也告诉用户"。
-    # 确认闭环那套机件同样没废，时点同样挪到真有产出可确认时。
+def _design_start_due(project: ProjectState) -> bool:
+    """这一轮该说"开始设计"了吗＝两样（面积 + 户型图）齐了、还没说过（纯函数）。
+
+    说过就再不说（`design_start_told`）：每轮再说一遍就成了复读。
+    """
+    return not project.design_start_told and not orchestrator.missing_slots(project)
+
+
+def _design_start_texts(project: ProjectState) -> list[str]:
+    """置位并交出那一句（`DESIGN_START_MESSAGES`）——**这一轮业主只收到它**。
+
+    不出确认清单、不再要任何信息，也**不在这儿说按什么假设做的**——那套要等图送到业主手里
+    之后才说（`deliverables_delivered`），裁决 8-31 原话就是"产出结果之后也告诉用户"。
+    确认闭环那套机件同样没废，时点同样挪到真有产出可确认时。
+    """
     project.design_start_told = True
     logger.info("design start told: project=%s", project.project_id)
-    return [*reply_texts, *DESIGN_START_MESSAGES], None, asserted_slot_keys
+    return list(DESIGN_START_MESSAGES)
 
 
 def _pacing_seconds(previous_text: str) -> float:

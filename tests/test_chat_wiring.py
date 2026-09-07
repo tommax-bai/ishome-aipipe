@@ -174,9 +174,9 @@ async def test_image_then_area_reports_key_then_area_and_inferred_ratio() -> Non
         ("building_area_sqm", "138", "observed"),
         ("floor_area_ratio_percent", str(DEFAULT_FLOOR_AREA_RATIO_PERCENT), "inferred"),
     ]
-    # 两样齐了：只说开始设计（假设那套等图回来再说）
+    # 两样齐了那一轮：只说那一句（假设那套等图回来再说，裁决 8-31；一句话说完，裁决 9-07）
     texts = [m.text.text for m in sender.sent if m.WhichOneof("content") == "text"]
-    assert any("开始" in t for t in texts)
+    assert texts[-1] == service.DESIGN_START_MESSAGES[0]
     assert not any("得房率按" in t for t in texts)
 
     project = await find_or_create_project(conversation_ref())

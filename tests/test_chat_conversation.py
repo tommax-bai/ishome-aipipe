@@ -421,22 +421,39 @@ async def test_structural_facts_never_confirmable() -> None:
 
 @pytest.mark.asyncio
 async def test_two_inputs_in_says_only_that_design_started() -> None:
-    """面积与户型图都齐了，**只说开始设计**——不提任何假设，也不再要任何信息。
+    """两样齐了那一轮：业主**只收到一句**"我这就为你做设计"，**里面没有问号**。
 
-    真机上图还没发出去，业主就先收到"我按 4 个人来安排、得房率按 80% 算"，
-    他不知道这是在说哪份东西（用户 2026-08-31 晚）。裁决原话本来就写着
-    "产出结果之后也告诉用户"，首版把"产出后"落成了"输入齐了后"。
+    脚本用的就是 2026-09-07 真机那一轮模型写的三条（复述 + 进度播报 + 追问人数与核心诉求）——
+    用户原话"这会不应该提问""这是三段话说的太冗余了，我们只需要回复一句"。
+    **不靠提示词纪律**：这一轮模型写的回复整批作废，它产不出出现在业主那头的问号。
+    假设那套同样一个字都不许提前漏出来（裁决 8-31：产出送到之后才说）。
     """
     sender = CapturingSender()
     llm = FakeLlm(
         intents=[intent_json("provide_info")],
-        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。")],
+        turns=[
+            json.dumps(
+                {
+                    "facts": ALL_SLOT_FACTS,
+                    "replies": [
+                        "建筑面积138㎡、得房率81%已记下。",
+                        "接下来我会基于这张户型图和您提供的数据，快速生成初步布局方案。",
+                        "您方便说说家里常住几口人？以及最希望这个家解决的核心问题吗？",
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        ],
     )
 
-    await service.ingest_message(make_inbound("138 平，图发你了"), sender, llm)
+    await service.ingest_message(make_inbound("138平米，81%得房率"), sender, llm)
 
     texts = [m.text.text for m in sender.sent]
-    assert texts[-2:] == list(service.DESIGN_START_MESSAGES)
+    assert texts == list(service.DESIGN_START_MESSAGES)
+    assert "？" not in texts[0] and "?" not in texts[0]
+    # 模型这一轮写的三条一条都没出去
+    for dropped in ("已记下", "接下来我会", "常住几口人"):
+        assert dropped not in texts[0], dropped
     # 一个假设都不许提前漏出来
     for leak in ("我按", "得房率", "%", "装修方向", "不说也没关系"):
         assert all(leak not in t for t in texts), leak
@@ -444,19 +461,76 @@ async def test_two_inputs_in_says_only_that_design_started() -> None:
 
 
 @pytest.mark.asyncio
-async def test_design_start_is_never_repeated() -> None:
-    """开工只报一次：每轮再说一遍就成了复读。"""
+async def test_the_turn_that_completes_the_two_inputs_never_calls_the_orchestrator_model() -> None:
+    """缺口由代码补上的那一轮（他传了图），编排模型**一次都不调**。
+
+    这是"结构性堵死"那半的直接门禁：模型没有产回复的位置，就不可能在这一轮提问——
+    9-01 记的判据是"真机再出现一次就做"，9-07 真机第二次出现（用户裁决当场拍板）。
+    脚本里只放一轮编排输出：第二轮若还调模型，`pop` 空列表当场报错。
+    """
     sender = CapturingSender()
     llm = FakeLlm(
         intents=[intent_json("provide_info"), intent_json("provide_info")],
-        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。"), turn_json([], "好的。")],
+        turns=[turn_json([ALL_SLOT_FACTS[2]], "面积记下了，再发张户型图给我。")],
+    )
+    await service.ingest_message(make_inbound("138 平", "in-c1"), sender, llm)
+    before = len(sender.sent)
+    image = make_inbound(None, "in-c2")
+    image.image.SetInParent()
+
+    await service.ingest_message(image, sender, llm)
+
+    assert llm.calls.count(orchestrator.ORCHESTRATOR_MODEL) == 1  # 第一轮调过，这一轮没调
+    assert [m.text.text for m in sender.sent[before:]] == list(service.DESIGN_START_MESSAGES)
+
+
+@pytest.mark.asyncio
+async def test_the_design_start_turn_still_refuses_spoken_structure() -> None:
+    """那一轮**唯一的例外**：他同一句里提了承重墙，结构说明照发。
+
+    "只回一句"管的是模型写的回应（复述、进度播报、追问）；结构说明是红线 §8.3 要求随回复附的
+    两条路径——口述结构不作设计依据、要么不动结构要么给硬证据。少说它等于闷掉一条红线，
+    而它本身不含问号，"结构上问不出来"那条保证不受影响。
+    """
+    sender = CapturingSender()
+    structural_fact = {
+        "target_id": "wall-living-north",
+        "property": "load_bearing",
+        "value": True,
+        "fact_kind": "structural",
+        "cognitive_state": "observed",
+    }
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")],
+        turns=[turn_json([*ALL_SLOT_FACTS, structural_fact], "都记下了。")],
+    )
+
+    await service.ingest_message(make_inbound("138 平，图发你了，北墙是承重墙"), sender, llm)
+
+    texts = [m.text.text for m in sender.sent]
+    assert texts == [*orchestrator.structural_notes(), *service.DESIGN_START_MESSAGES]
+    assert all("？" not in t and "?" not in t for t in texts)
+
+
+@pytest.mark.asyncio
+async def test_turns_after_the_design_start_still_go_through_the_model() -> None:
+    """射程只到"两样齐那一轮"：**此后的轮次照旧走模型**，会话不变哑。
+
+    开工也只报一次——每轮再说一遍就成了复读。
+    """
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info"), intent_json("provide_info")],
+        turns=[turn_json(ALL_SLOT_FACTS, "都记下了。"), turn_json([], "阳台那面窗我会留着。")],
     )
     await service.ingest_message(make_inbound("138 平，图发你了", "in-d1"), sender, llm)
     before = len(sender.sent)
 
-    await service.ingest_message(make_inbound("再说一句", "in-d2"), sender, llm)
+    await service.ingest_message(make_inbound("阳台能封吗", "in-d2"), sender, llm)
 
-    assert all("开始给你做设计" not in m.text.text for m in sender.sent[before:])
+    later = [m.text.text for m in sender.sent[before:]]
+    assert later == ["阳台那面窗我会留着。"]  # 模型这一轮的回复照发
+    assert all(service.DESIGN_START_MESSAGES[0] not in t for t in later)
 
 
 @pytest.mark.asyncio
