@@ -15,10 +15,17 @@ infra 仓的 LiteLLM 配置（ishome-infra/litellm/config.yaml），换模型改
 from __future__ import annotations
 
 import base64
+import logging
 import os
+import time
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
+"""模型调用**必须在日志里看得见**（2026-09-07 定）：解析一张户型图要调十来次网关，
+"解析卡住了"与"某一次调用超时了"在业务库那段 JSON 里长得一模一样。级别与落点由进程入口
+（`activity_log.configure_logging`）统一决定，本模块只管记、不碰配置——出站边缘不感知上层。"""
 
 DEFAULT_LITELLM_BASE_URL = "http://127.0.0.1:4000/v1"
 
@@ -32,6 +39,18 @@ class LlmGatewayError(Exception):
     只说"HTTP 400"排不了错——逻辑模型名没在网关配置里（改了配置没重启是常见形态）
     与凭证失效返回的是同一个状态码，正文才分得开。
     """
+
+
+def _first_choice_text(data: Any) -> Any:
+    """首个 choice 的 content；形态不认识回 None（纯函数）。
+
+    记日志与判形态**共用这一处**：日志要量回文多长、`_complete` 要判它是不是文本，
+    两边各写一次取法就会出现"日志说有回文、判定说形态不认识"这种自相矛盾的现场。
+    """
+    try:
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
 class LiteLlmVisionClient:
@@ -105,7 +124,20 @@ class LiteLlmVisionClient:
         return await self._complete(payload)
 
     async def _complete(self, payload: dict[str, Any]) -> str:
-        """一次补全调用：送出、要回首个 choice 的文本。两种调用形态共用这一段。"""
+        """一次补全调用：送出、要回首个 choice 的文本。两种调用形态共用这一段。
+
+        **进出各记一条**：逻辑模型名 + 带没带图 + 花了多久。记的是逻辑名不是物理模型
+        （`floorplan-parse.default` 一类）——换模型改的是网关配置，日志里出现物理模型名
+        等于把映射抄了第二份，换了就对不上。带没带图要记：读图的调用比纯文本慢一个量级，
+        分不开这两类就看不出"慢"是慢在哪儿。
+        """
+        model = str(payload.get("model", "?"))
+        with_image = any(
+            isinstance(message.get("content"), list) for message in payload.get("messages", [])
+        )
+        shape = "图+文" if with_image else "纯文本"
+        logger.info("网关调用 model=%s 形态=%s 超时=%.0fs", model, shape, self.timeout_seconds)
+        started = time.monotonic()
         try:
             response = await self._http().post(
                 f"{self.base_url}/chat/completions",
@@ -114,16 +146,40 @@ class LiteLlmVisionClient:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
+            # 失败这条也带耗时：网关拒绝是秒级、超时是分钟级，这个数把"配置不对"与
+            # "模型真的慢"分开——只看状态码分不出来。
+            logger.warning(
+                "网关调用失败 model=%s 形态=%s 耗时 %.3fs HTTP %d：%s",
+                model,
+                shape,
+                time.monotonic() - started,
+                e.response.status_code,
+                e.response.text.strip()[:400],
+            )
             raise LlmGatewayError(
                 f"网关返回 {e.response.status_code}：{e.response.text.strip()[:800]}"
             ) from e
         except httpx.HTTPError as e:
+            logger.warning(
+                "网关调用失败 model=%s 形态=%s 耗时 %.3fs 不可达（%s）：%s",
+                model,
+                shape,
+                time.monotonic() - started,
+                self.base_url,
+                e,
+            )
             raise LlmGatewayError(f"网关不可达（{self.base_url}）：{e}") from e
         data = response.json()
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as e:
-            raise LlmGatewayError(f"网关返回形态不认识：{str(data)[:800]}") from e
+        logger.info(
+            "网关返回 model=%s 形态=%s 耗时 %.3fs 回文=%d字",
+            model,
+            shape,
+            time.monotonic() - started,
+            len(str(_first_choice_text(data))),
+        )
+        content = _first_choice_text(data)
+        if content is None:
+            raise LlmGatewayError(f"网关返回形态不认识：{str(data)[:800]}")
         if not isinstance(content, str):
             raise LlmGatewayError(f"补全内容不是文本：{type(content)!r}")
         return content

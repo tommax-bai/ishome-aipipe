@@ -38,6 +38,7 @@ import httpx
 from pydantic import ValidationError
 from temporalio import activity
 
+from genpipe_worker.activity_log import logged_activity
 from genpipe_worker.floorplan_copy import PlanCopyError, write_copy
 from genpipe_worker.floorplan_facts import derive_facts
 from genpipe_worker.floorplan_geometry import FloorplanGeometryError, extract_geometry
@@ -144,6 +145,7 @@ class FloorplanActivities:
         return floorplan_object_key, image_bytes, media_type
 
     @activity.defn(name=ACTIVITY_FLOORPLAN_PARSE)
+    @logged_activity
     async def parse_floorplan(self, request: dict[str, Any]) -> ActivityResult:
         """户型图解析：对象键 → 勘测 → 分区读 → 逐条判定 → 特征标记；存档写回同前缀。
 
@@ -190,6 +192,7 @@ class FloorplanActivities:
         }
 
     @activity.defn(name=ACTIVITY_FLOORPLAN_GEOMETRY_EXTRACT)
+    @logged_activity
     async def extract_floorplan_geometry(self, request: dict[str, Any]) -> ActivityResult:
         """对象键 → 勘测一次（唯一一次模型调用）→ 几何（确定性）→ 户型事实（确定性）。
 
@@ -248,6 +251,7 @@ class FloorplanActivities:
         }
 
     @activity.defn(name=ACTIVITY_PLAN_NOTES_WRITE)
+    @logged_activity
     async def write_plan_notes(self, request: dict[str, Any]) -> ActivityResult:
         """事实清单 + 房间清单 → 批注（每句引得到 fact_id，机检在 `floorplan_notes`）。"""
         try:
@@ -266,6 +270,7 @@ class FloorplanActivities:
         }
 
     @activity.defn(name=ACTIVITY_PLAN_COPY_WRITE)
+    @logged_activity
     async def write_plan_copy(self, request: dict[str, Any]) -> ActivityResult:
         """事实清单 → 页面文案（标题 / 总结 / 贴士）；数字必须在事实清单里出现过。"""
         try:
@@ -279,6 +284,7 @@ class FloorplanActivities:
         return {"verdict": "ok", "copy": copy.model_dump(by_alias=True)}
 
     @activity.defn(name=ACTIVITY_TASK_RESULT_DELIVER)
+    @logged_activity
     async def deliver_task_result(self, request: dict[str, Any]) -> ActivityResult:
         """把编排归并好的结论 `POST` 到派发时注入的回调地址（project.v1 `generation_task_result`）。
 

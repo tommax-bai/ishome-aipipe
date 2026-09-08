@@ -22,6 +22,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from genpipe_worker.activities import FloorplanActivities, activity_registry
+from genpipe_worker.activity_log import configure_logging, logger
 from genpipe_worker.llm_client import LiteLlmVisionClient
 from genpipe_worker.object_store import ObjectStoreError, OssSettings, OssUploadStore
 
@@ -53,10 +54,23 @@ async def run_worker(address: str | None = None, namespace: str | None = None) -
     )
     async with httpx.AsyncClient(timeout=_CALLBACK_TIMEOUT_SECONDS) as http:
         floorplan = FloorplanActivities(store, llm, http)
+        registry = activity_registry(floorplan)
+        # 起来了要留一条：journal 里"这个 unit 活着"此前只有 systemd 那句 Started，分不清
+        # 进程是在等活干还是连不上 Temporal 正在退。网关地址一并留——解析那几步全从它出去，
+        # "调不到模型"与"模型答得不对"是两码事，地址对不对是第一个要排除的。
+        logger.info(
+            "genpipe worker 就位 temporal=%s namespace=%s queue=%s 桶=%s 网关=%s activities=%s",
+            address or temporal_address(),
+            namespace or temporal_namespace(),
+            GENPIPE_TASK_QUEUE,
+            store.bucket_name,
+            llm.base_url,
+            "、".join(sorted(registry)),
+        )
         worker = Worker(
             client,
             task_queue=GENPIPE_TASK_QUEUE,
-            activities=list(activity_registry(floorplan).values()),
+            activities=list(registry.values()),
         )
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -66,11 +80,16 @@ async def run_worker(address: str | None = None, namespace: str | None = None) -
             async with worker:
                 await stop.wait()
         finally:
+            # 收到信号与真正收尾完是两个时点：在飞的 activity 要等它跑完，中间这段
+            # journal 上此前是空的——"服务停了吗"只能靠 systemd 那句猜。
+            logger.info("genpipe worker 收到停止信号，等在飞 activity 收尾")
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.remove_signal_handler(sig)
             await llm.aclose()
+            logger.info("genpipe worker 已停")
 
 
 def main() -> None:
     """入口脚本 `genpipe-worker`（pyproject [project.scripts]）。"""
+    configure_logging()
     asyncio.run(run_worker())

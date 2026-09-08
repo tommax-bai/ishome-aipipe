@@ -54,6 +54,9 @@ ALLOWED_VERTICAL_FILES = {
     "render3d_pipeline.py",  # genpipe 编排件：三维线（场景编译 → 底渲 → 写实化扇出）
     # 2026-09-06 三维线派发形态（同一条"无 IO"契约；键形态已拍，见模块 docstring）：
     "space_render_dispatch.py",  # genpipe 装配件：派发入参（+回调地址）与结论 → 回调报文
+    # 2026-09-07 真机取证：三个执行侧 worker 全天 journal 零输出，两次失败无从复盘。
+    # 补留痕（有 import-linter 方向契约，挂在 activities 与纯库层之间）：
+    "activity_log.py",  # 日志装配 + activity 一进一出的留痕；纯库层看不见它
 }
 
 # 纵切件允许拆为同名子包（文件 → 目录），当前评审通过的只有 repo（双实现：
