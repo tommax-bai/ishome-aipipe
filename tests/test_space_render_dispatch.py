@@ -217,7 +217,7 @@ async def test_products_put_realism_as_deliverable_and_routes_as_lineage() -> No
         "revision_id": "rev-1",
         "evidence": {
             "bucket": "ishome-private",
-            "metre_per_unit": 14.27,
+            "mm_per_unit": 14270.0,
             "area_match_ratio": 0.951,
             "heights_source": "mock-default",
         },

@@ -79,7 +79,7 @@ def scene_compile_ok(_: Any) -> dict[str, Any]:
         "verdict": "ok",
         "scene_package_key": SCENE_KEY,
         "bucket": "ishome-private",
-        "metre_per_unit": 14.27,
+        "mm_per_unit": 14270.0,
         "area_match_ratio": 0.951,
         "heights_source": "mock-default",
     }
@@ -205,7 +205,7 @@ async def test_three_cameras_one_lost_one_redispatched_one_straight_through() ->
     assert result.failure is None
     assert result.scene_package_key == SCENE_KEY
     # 自证数原样带回、不判；键本身不重复进自证数
-    assert result.scene_evidence["metre_per_unit"] == 14.27
+    assert result.scene_evidence["mm_per_unit"] == 14270.0
     assert result.scene_evidence["heights_source"] == "mock-default"
     assert "scene_package_key" not in result.scene_evidence
     assert result.base_render_evidence == {

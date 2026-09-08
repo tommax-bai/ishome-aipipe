@@ -132,8 +132,12 @@ class SpaceRenderResult(BaseModel):
     verdict: SpaceRenderVerdict
     scene_package_key: str | None = None
     scene_evidence: dict[str, Any] = Field(default_factory=dict)
-    """scene-compile 自证数原样（`metre_per_unit` / `area_match_ratio` / `heights_source` …），
-    不判。"""
+    """scene-compile 自证数原样（`mm_per_unit` / `area_match_ratio` / `heights_source` …），
+    不判。
+
+    **按键透传、不认字段名**（见 :func:`evidence_of`）：render3d 2026-09-08 把长度量纲
+    从米改成毫米、`metre_per_unit` 随之改名 `mm_per_unit`，本模块一行代码都不用动——
+    这里只是把 docstring 里举的例子跟上，免得下一个人照着已经不存在的名字去找。"""
     base_render_evidence: dict[str, Any] = Field(default_factory=dict)
     """base-render 回执里机位之外的自证数原样（`width_px` / `height_px` …），不判。"""
     renders: list[CameraRender] = Field(default_factory=list)
