@@ -3,9 +3,10 @@
 流程：入站落存（svc_chat.messages，幂等键防重存兼去重门）→ 输入归一化
 （v1：quick_reply 直通；TODO(normalize) 多消息聚合、语音转文字）→ Intent Router
 → Orchestrator（事实抽取 + 回复）→ 出站回话（发送后落存出站原文）。
-**两样（面积 + 户型图）齐了那一轮是个岔路**：由系统文案接管说一句"我这就为你做设计"，
-模型写的回复不出现在这一轮——它没有产回复的位置，也就问不出话来（裁决 9-07，见
-`DESIGN_START_MESSAGES` 与 `_design_start_due`）。
+**两样（面积 + 户型图）齐了那一轮是个岔路**：由系统文案接管，模型写的回复不出现在这一轮——
+它没有产回复的位置，也就问不出话来（裁决 9-07，见 `_two_inputs_turn_due`）。
+**那一轮说哪一句，等业务侧回执才定**：真铸了任务才说"我这就为你做设计"，没铸就只回执
+（裁决 9-08，判据全文见 `_reply_texts`）。
 
 **假设那套不在这条流程里**：它由 `deliverables_delivered` 在图送回业主之后主动发
 （裁决 8-31 原话"产出结果之后也告诉用户"）。确认闭环（清单 → user_confirmed 升级）
@@ -39,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -84,7 +86,16 @@ _RESTORED_FACT_SOURCE = "project_svc_slot"
 """从业务侧读回来的事实的来源标记：这条不是这一轮听来的，是真相属主那儿取的。"""
 
 DESIGN_START_MESSAGES: tuple[str, ...] = ("我这就为你做设计，请稍等。",)
-"""两样齐了那一轮，业主收到的**全部就是这一句**（用户裁决 2026-09-07）。
+"""**业务侧这一轮真铸了任务**时，业主收到的**全部就是这一句**（用户裁决 2026-09-07 + 09-08）。
+
+**说这句当且仅当真开工了**（判据是 `MilestoneProgress.created_task_ids` 非空，落点
+`_reply_texts`）——**这条推翻 2026-09-08 更早的一条裁决，留在这儿作对照**：那条是
+《重启后重说一次"我这就为你做设计"可以接受》（用户原话"重启吧，重启后重说。"），
+当时执行者以"那一轮没派活却说了这句＝说假话"为由建议改判据，用户判断代价可接受、维持现状。
+**同日真机把代价抬上来了**：18:47—18:48 业主发图三轮，业务侧三次回执全是 `tasks=[]`
+（项目昨天收到三张图后已在 M1，补派的射程是"图还没出来的时候"，**不派是对的**），
+而系统照旧说了"我这就为你做设计"，还接着编出"正在解析结构与空间关系""预计2分钟内完成"。
+**代价不是重启后偶尔多说一句，是拿过图的业主每次发图都被骗**——用户 2026-09-08 拍板改判据。
 
 **一句话说得完就不说三句**：不复述他刚给的、不播报进度、不交代后续。用户原话——
 "这是三段话说的太冗余了，我们只需要回复一句，我这就为您做设计，请稍等就可以了"；
@@ -93,15 +104,35 @@ DESIGN_START_MESSAGES: tuple[str, ...] = ("我这就为你做设计，请稍等�
 此前是两条（"面积和户型图都齐了…" + "做好了我直接把图发过来…"），一条复述一条交代，
 业主两样都不需要。
 
-**这一轮不调编排模型**（`_converse` 里 `_design_start_due` 那两支）：模型根本没有产回复的
-位置，"缺口为空还提问"就从提示词纪律变成了结构——结构上问不出来。判据是 9-01 写死的
+**两样齐那一轮不调编排模型**（`_converse` 里 `_two_inputs_turn_due` 那两支）：模型根本没有
+产回复的位置，"缺口为空还提问"就从提示词纪律变成了结构——结构上问不出来。判据是 9-01 写死的
 "真机再出现一次就做"，9-07 真机第二次出现（"您方便说说家里常住几口人？"）。
+**9-08 改的是"那一轮说哪一句"，那条管的是"那一轮不许问问题"，两条同时成立**：真派了活的
+那一轮不调模型、只说这一句；没派活的那一轮同样不调模型、只说 `NO_WORK_DISPATCHED_MESSAGES`。
 
 **这里一个假设都不提**：假设那套要等图发到业主手里之后才说（`deliverables_delivered`）。
 真机上图还没影，业主先收到"我按 4 个人来安排"——他不知道这是在说哪份东西。
 
 **称呼统一用"你"**：本仓发给业主的固定文案（失败话、随图说明、假设说明）一律"你"，
 不一处"您"一处"你"。
+"""
+
+NO_WORK_DISPATCHED_MESSAGES: tuple[str, ...] = ("你发的我收到了。",)
+"""两样齐了、但业务侧这一轮一个任务都没铸时说的（用户裁决 2026-09-08 的另一半）。
+
+**为什么是一句干回执，而不是别的**——会话侧这一刻确知的只有一件事：**东西收到了**。
+为什么没派活（他昨天已经拿过三张图、项目已在 M1）、接下来还会不会有，**是业务侧的判断，
+会话侧不判里程碑也不建任务（红线）**；把 `tasks=[]` 翻译成"你已经拿过图了"就是会话侧替
+业务侧下判断，而"业主拿到图之后再发图该怎么办"这件产品判断**用户尚未拍板**，不在这儿替他定。
+所以只说自己确知的那一件，不猜、不承诺、不解释（《纪律·拿不到就说没有，不许填猜的值》；
+"给最直接简要的回答"，裁决 9-07）。
+
+**为什么不干脆放模型去回**：这一轮缺口为空，模型在这种轮次上正是 9-07 结构性堵死的那一格
+（缺口为空还提问）；把口子放开等于把那条裁决退回提示词纪律，而纪律在这儿已经失守过两次。
+不调模型这一条不动，只换它接管时说的那句。
+
+**已知代价（写在明处）**：业主发来图，只收到一句回执，然后没有下文——他不知道要不要等。
+这正是"再发图该怎么办"那件产品判断的空缺，**等用户拍板**；在拍板之前，宁可少说，不说假话。
 """
 
 REPORT_FAILED_MESSAGES: tuple[str, ...] = (
@@ -158,6 +189,31 @@ class BusinessSideGateway(Protocol):
     async def fill_slots(self, project_id: str, slots: Sequence[SlotFill]) -> MilestoneProgress: ...
 
 
+@dataclass
+class TurnOutcome:
+    """一轮会话算出来的东西。**这一轮对业主说哪几句，不在这儿定死**（见 `_reply_texts`）。
+
+    定不了的原因是**时序**：这一轮该不该说"我这就为你做设计"，取决于紧接着那一跳上报的
+    回执里业务侧有没有真铸任务（裁决 2026-09-08），而那一跳在本结构产出之后才发生。
+    所以这里交出的是"素材 + 这一轮是什么形态"，拼成话的那一步在上报之后。
+    """
+
+    replies: list[str] = field(default_factory=list)
+    """这一轮算出来的回话（模型写的，或确认回执）——**系统文案接管时它整批作废**。"""
+
+    system_notes: list[str] = field(default_factory=list)
+    """系统写死、这一轮无论如何都要说的（今天只有结构说明，红线 §8.3 要求随回复附）。"""
+
+    quick_reply_checklist: str | None = None
+    """需 quick_reply 形态发送的确认清单文本（确认闭环的时点已挪到真有产出可确认时）。"""
+
+    asserted_slot_keys: set[str] = field(default_factory=set)
+    """业主这一轮**又给了一次**的槽位键——上报判据的入参（`pending_slot_fills`）。"""
+
+    two_inputs_turn: bool = False
+    """这一轮是不是"两样齐"那一轮＝系统文案接管、编排模型没调（裁决 2026-09-07）。"""
+
+
 async def get_project(project_id: str) -> ProjectState:
     """get = 必得（取不到抛异常）。"""
     project = await find_project(project_id)
@@ -202,35 +258,38 @@ async def ingest_message(
             logger.exception("known-slot restore failed: message_id=%s", inbound.message_id)
 
     try:
-        reply_texts, quick_reply_checklist, asserted_slot_keys = await _converse(
-            inbound, project, conversation, user_text, llm, capability
-        )
+        outcome = await _converse(inbound, project, conversation, user_text, llm, capability)
     except Exception:
         logger.exception("conversation turn failed: message_id=%s", inbound.message_id)
-        reply_texts, quick_reply_checklist = [FALLBACK_REPLY], None
         # 编排炸了走兜底话，但"他又发了一张图"这件事从入站消息本身就看得出来——
         # 图那半照样算他这一轮给过，重发触发重跑不因为 LLM 那一步失败而丢
-        asserted_slot_keys = _inbound_asserted_slot_keys(inbound)
+        outcome = TurnOutcome(
+            replies=[FALLBACK_REPLY], asserted_slot_keys=_inbound_asserted_slot_keys(inbound)
+        )
 
-    # 上报业务侧：在回话之前——"开始设计"这句要建立在业务侧真的接了活的基础上。
-    # 没接上就如实说（不装作在做），事实留在快照里下一轮再报。
+    # 上报业务侧：**在回话之前**——"我这就为你做设计"这句说不说，就看这一跳的回执里
+    # 有没有真铸出任务（判据全文见 `_reply_texts`）。没接上就如实说（不装作在做），
+    # 事实留在快照里下一轮再报。
+    progress: MilestoneProgress | None = None
+    report_failed = False
     if business is not None:
         try:
-            await report_facts(
+            progress = await report_facts(
                 conversation,
                 project,
                 business,
                 source_event_id=inbound.message_id,
-                asserted_slot_keys=asserted_slot_keys,
+                asserted_slot_keys=outcome.asserted_slot_keys,
             )
         except ProjectClientError:
             logger.exception("business-side report failed: message_id=%s", inbound.message_id)
-            reply_texts = [*reply_texts, *REPORT_FAILED_MESSAGES]
+            report_failed = True
 
+    reply_texts = _reply_texts(project, outcome, progress, report_failed=report_failed)
     await append_history(conversation, ConversationTurn(role="user", text=user_text))
     outbounds = [_text_reply(inbound, text) for text in reply_texts]
-    if quick_reply_checklist is not None:
-        outbounds.append(_quick_reply_checklist(inbound, quick_reply_checklist))
+    if outcome.quick_reply_checklist is not None:
+        outbounds.append(_quick_reply_checklist(inbound, outcome.quick_reply_checklist))
     # 幂等键从入站消息派生：同一入站消息的回话重试不会在聊天线程里发两遍
     await _send_all(
         conversation, sender, outbounds, idempotency_prefix=f"reply-{inbound.message_id}"
@@ -443,8 +502,10 @@ async def report_facts(
     该报的＝业主这一轮又给了一次的（`asserted_slot_keys`，重发同一张户型图也在内），
     加上值确实变了的；判据全文见 `pending_slot_fills`。
 
-    会话侧不判里程碑、不建任务：业务侧回来的 `created_task_ids` 只记日志，不据此改会话形态——
-    图好没好，等它经 `PresentDeliverables` 回来。失败上抛 `ProjectClientError`，
+    会话侧不判里程碑、不建任务：铸不铸任务全归业务侧，本侧只**读**它铸了没有——
+    `created_task_ids` 非空是"我这就为你做设计"这句话的唯一判据（裁决 2026-09-08，
+    落点 `_reply_texts`），**读它不等于判它**。图好没好仍等 `PresentDeliverables` 回来。
+    失败上抛 `ProjectClientError`，
     由调用方决定怎么对业主说；已报成功的槽位记进 `reported_slots`，重启丢了这份缓存也不要紧——
     下一轮开头 `restore_known_slots` 从业务侧读回来（读不回来最坏也只是多报一次，upsert 幂等）。
     """
@@ -547,7 +608,8 @@ async def deliverables_delivered(
     **时点是"产出之后"，不是"输入齐了之后"**（用户 2026-08-31 晚纠正）：裁决原话写的就是
     "产出结果之后也告诉用户……如果他想修改可以再进行修改"，首版却落成了"缺口一空就说"——
     真机上业主刚发完图，先收到一条"我按 4 个人来安排、得房率按 80% 算"，图还没影，
-    他不知道这是在说哪份东西。两样齐了那一轮只说"开始设计"（`DESIGN_START_MESSAGES`）。
+    他不知道这是在说哪份东西。两样齐了那一轮只说一句系统文案（`_reply_texts` 按业务侧
+    回执二选一：真派了活说 `DESIGN_START_MESSAGES`，没派说 `NO_WORK_DISPATCHED_MESSAGES`）。
 
     **今天没有调用方，接线时点写死＝"渠道出站发我们自己桶里的图"那一段接通时**——图眼下还
     送不到业主手里（《现在在哪儿.md》"图从会话进来"五段里的第三段未做）。同渲染件与
@@ -620,19 +682,19 @@ async def _converse(
     user_text: str,
     llm: LlmCompletion,
     capability: CapabilityLookup | None,
-) -> tuple[list[str], str | None, set[str]]:
-    """一轮会话：返回（文本回话列表, 需 quick_reply 形态发送的确认清单文本或 None,
-    业主这一轮又给了一次的槽位键）。
+) -> TurnOutcome:
+    """一轮会话：算出这一轮的素材与形态（`TurnOutcome`），**不定死说哪几句**。
 
-    第三样是上报判据的入参（`pending_slot_fills`）：报什么由"他这一轮给了什么"定，
-    而这一轮解析出了哪些事实只有这儿知道——图那半看入站消息，面积/得房率那半看 LLM 抽的事实。
+    `asserted_slot_keys` 是上报判据的入参（`pending_slot_fills`）：报什么由"他这一轮给了什么"
+    定，而这一轮解析出了哪些事实只有这儿知道——图那半看入站消息，面积/得房率那半看 LLM 抽的事实。
 
     **两样齐了那一轮由系统文案接管，模型的回复不出现在这一轮**（用户裁决 2026-09-07）：
     分两支落，因为缺口是被谁补上的不一样——他这一轮传的图由代码记（`upload_object_key_fact`），
     这一支在 `orchestrator.step` **之前**判，模型连调都不调；面积只能由模型从这一轮文本里抽，
-    那一支只好在 step 之后判，抽完了把它写的回复整批作废。两支的出站都是那一句
-    （`DESIGN_START_MESSAGES`），只有结构说明是例外——它是红线 §8.3 要求附的两条路径，
-    不是对他上一句的回应，他这一轮真提了承重墙就仍要说。
+    那一支只好在 step 之后判，抽完了把它写的回复整批作废。两支交出的都是
+    `two_inputs_turn=True`（说哪一句等业务侧回执，裁决 2026-09-08，见 `_reply_texts`），
+    只有结构说明是例外——它是红线 §8.3 要求附的两条路径，不是对他上一句的回应，
+    他这一轮真提了承重墙就仍要说。
     """
     checklist_open = bool(project.open_confirmation_ids)
     intent = await _route(inbound, user_text, llm, checklist_open=checklist_open)
@@ -640,7 +702,7 @@ async def _converse(
     if intent == "confirm_checklist" and checklist_open:
         upgraded = orchestrator.upgrade_confirmed(project)
         logger.info("checklist confirmed: project=%s upgraded=%d", project.project_id, upgraded)
-        return [orchestrator.confirm_ack_text()], None, set()
+        return TurnOutcome(replies=[orchestrator.confirm_ack_text()])
 
     asserted_slot_keys = _inbound_asserted_slot_keys(inbound)
     # 图片入站：先把"他传了户型图"记上再算缺口——否则这一轮还按"还没有图"问，
@@ -659,8 +721,8 @@ async def _converse(
 
     # 他这一轮传的图刚把最后一个缺口补上：**模型这一轮一次都不调**，它没有产回复的位置，
     # 也就问不出话来（用户裁决 2026-09-07）。代价写在明处＝这一轮不回应他上一句说了什么。
-    if _design_start_due(project):
-        return _design_start_texts(project), None, asserted_slot_keys
+    if _two_inputs_turn_due(project):
+        return _two_inputs_turn(project, asserted_slot_keys)
 
     turn = await orchestrator.step(llm, project, await get_history(conversation), user_text)
     structural = orchestrator.merge_facts(project, turn.facts)
@@ -671,36 +733,89 @@ async def _converse(
     ):
         project.minimum_inputs_confirmed = False
 
-    if _design_start_due(project):
+    # 结构说明**自成两条**，不再拼在回话尾巴上：拒绝是一件事、两条出路是另一件事，
+    # 而拼上去正好把那一条撑成真机上被吐槽的长文（用户 2026-08-31）
+    notes = orchestrator.structural_notes() if structural else []
+    if _two_inputs_turn_due(project):
         # 缺口是这一轮模型抽出的面积补上的（9-07 真机那一轮就是这样）：**它写的回复整批作废**。
         # 留着正好是被吐槽的那三条——复述、进度播报，外加那个不该问的问题。
         # 结构说明是例外：它是红线 §8.3 要求随回复附的两条路径，不是对他上一句的回应。
-        notes = orchestrator.structural_notes() if structural else []
-        return [*notes, *_design_start_texts(project)], None, asserted_slot_keys
+        return _two_inputs_turn(project, asserted_slot_keys, system_notes=notes)
 
-    reply_texts = turn.replies or [FALLBACK_REPLY]
-    if structural:
-        # 结构说明**自成两条**，不再拼在回话尾巴上：拒绝是一件事、两条出路是另一件事，
-        # 而拼上去正好把那一条撑成真机上被吐槽的长文（用户 2026-08-31）
-        reply_texts = [*reply_texts, *orchestrator.structural_notes()]
-    return reply_texts, None, asserted_slot_keys
+    return TurnOutcome(
+        replies=turn.replies or [FALLBACK_REPLY],
+        system_notes=notes,
+        asserted_slot_keys=asserted_slot_keys,
+    )
 
 
-def _design_start_due(project: ProjectState) -> bool:
-    """这一轮该说"开始设计"了吗＝两样（面积 + 户型图）齐了、还没说过（纯函数）。
+def _reply_texts(
+    project: ProjectState,
+    outcome: TurnOutcome,
+    progress: MilestoneProgress | None,
+    *,
+    report_failed: bool,
+) -> list[str]:
+    """这一轮到底对业主说哪几句。唯一的副作用是置位 `design_start_told`（说了才置）。
 
-    说过就再不说（`design_start_told`）：每轮再说一遍就成了复读。
+    **"我这就为你做设计"只在业务侧这一轮真铸了任务时说**——判据是回执里
+    `MilestoneProgress.created_task_ids` 非空（用户裁决 2026-09-08，来路与代价写在
+    `DESIGN_START_MESSAGES` 的 docstring 里）。此前的判据是"两样齐那一轮"，与业务侧派没派活
+    无关，于是 9-08 真机上业务侧三次回执全是 `tasks=[]`、系统照样说"我这就为你做设计"。
+    **这条判据同时管住了另外两种说假话**：上报那一跳压根没打的轮次（`progress is None`
+    ——这一轮业主没给新东西）、以及业务侧收下了但没铸任务的轮次，都说不出这一句。
+
+    **真派了活那一轮由系统文案接管，模型写的回复整批作废**：它有可能不是"两样齐"那一轮
+    （业主重发户型图触发补派时，缺口早就是满的、模型照常被调过），但业主该收到的仍只有这一句
+    ——"只说一句"那条（裁决 9-07）管的是这句话出现的那一轮，不是某个特定的入站形态。
+    编排炸了走兜底话的那一轮同理：活真派下去了，"麻烦再发一次"才是这时候的假话。
+
+    **没派活的那一轮说什么**：`NO_WORK_DISPATCHED_MESSAGES`（一句干回执，理由写在那儿）。
+    上报失败的那一轮连回执都不说——`REPORT_FAILED_MESSAGES` 的第一句本身就是回执，
+    说两遍是复述。
     """
-    return not project.design_start_told and not orchestrator.missing_slots(project)
+    if progress is not None and progress.created_task_ids and not project.design_start_told:
+        return [*outcome.system_notes, *_design_start_texts(project)]
+    if outcome.two_inputs_turn:
+        told = [] if report_failed else list(NO_WORK_DISPATCHED_MESSAGES)
+        return [*outcome.system_notes, *told, *(REPORT_FAILED_MESSAGES if report_failed else ())]
+    texts = [*outcome.replies, *outcome.system_notes]
+    return [*texts, *REPORT_FAILED_MESSAGES] if report_failed else texts
 
 
-def _design_start_texts(project: ProjectState) -> list[str]:
-    """置位并交出那一句（`DESIGN_START_MESSAGES`）——**这一轮业主只收到它**。
+def _two_inputs_turn_due(project: ProjectState) -> bool:
+    """这一轮是不是"两样齐"那一轮＝面积与户型图都在手、而这一轮还没过（纯函数）。
 
-    不出确认清单、不再要任何信息，也**不在这儿说按什么假设做的**——那套要等图送到业主手里
+    过了就再不接管（`two_inputs_turn_passed`）：此后的轮次照旧走编排模型，会话不变哑。
+    **这一位与"开工那句说过没有"分开记**（`design_start_told`）：没派活的那一轮说的是回执，
+    开工那句一个字没说，但接管这件事照样发生过——合成一个开关，会话就永远钉在系统文案上。
+    """
+    return not project.two_inputs_turn_passed and not orchestrator.missing_slots(project)
+
+
+def _two_inputs_turn(
+    project: ProjectState,
+    asserted_slot_keys: set[str],
+    *,
+    system_notes: Sequence[str] = (),
+) -> TurnOutcome:
+    """记下"两样齐那一轮过去了"，交出一个说哪一句还没定的结果（等业务侧回执，见 `_reply_texts`）。
+
+    这一轮不出确认清单、不再要任何信息，也**不说按什么假设做的**——那套要等图送到业主手里
     之后才说（`deliverables_delivered`），裁决 8-31 原话就是"产出结果之后也告诉用户"。
     确认闭环那套机件同样没废，时点同样挪到真有产出可确认时。
     """
+    project.two_inputs_turn_passed = True
+    logger.info("two inputs complete, system text takes over: project=%s", project.project_id)
+    return TurnOutcome(
+        system_notes=list(system_notes),
+        asserted_slot_keys=asserted_slot_keys,
+        two_inputs_turn=True,
+    )
+
+
+def _design_start_texts(project: ProjectState) -> list[str]:
+    """置位并交出那一句（`DESIGN_START_MESSAGES`）——**这一轮业主只收到它**。"""
     project.design_start_told = True
     logger.info("design start told: project=%s", project.project_id)
     return list(DESIGN_START_MESSAGES)

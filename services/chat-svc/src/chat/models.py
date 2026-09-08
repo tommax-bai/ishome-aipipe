@@ -122,11 +122,21 @@ class ProjectState(BaseModel):
     phase: ProjectPhase = "preliminary"
     revision: int = 0
     base_facts: BaseFacts = Field(default_factory=BaseFacts)
-    design_start_told: bool = False
-    """两样（面积 + 户型图）齐了之后，"这就开始做设计"跟他说过没有。
+    two_inputs_turn_passed: bool = False
+    """两样（面积 + 户型图）齐的那一轮已经过去了——**此后的轮次照旧走编排模型**。
 
-    与 `assumptions_told` **分成两个开关**，因为它们是**两个时点**：这条在两样齐的那一轮说，
-    那条要等产出送到业主手里之后（裁决 8-31 原话："产出结果之后也告诉用户"）。
+    这一位管的是"哪一轮由系统文案接管、模型不调"（裁决 2026-09-07 结构那半），
+    与"开工那句说过没有"（`design_start_told`）**是两件事**：接管的那一轮该说哪一句，
+    要等业务侧回执才知道（裁决 2026-09-08，判据全文见 `service._reply_texts`）——
+    业务侧没派活的那一轮说的是回执、开工那句一个字没说，但那一轮照样过去了。
+    合成一个开关，没派活的那一轮就会把会话永远钉在系统文案上，编排模型再不被调用。
+    """
+
+    design_start_told: bool = False
+    """"我这就为你做设计"这句跟他说过没有——**只在业务侧真铸了任务的那一轮置上**。
+
+    与 `assumptions_told` **分成两个开关**，因为它们是**两个时点**：这条在业务侧真派了活的
+    那一轮说，那条要等产出送到业主手里之后（裁决 8-31 原话："产出结果之后也告诉用户"）。
     合成一个开关，两件事就没法各说各的一次。
     """
 

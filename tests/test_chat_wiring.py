@@ -67,13 +67,23 @@ class FakeBusiness:
     """记录上报的假业务侧；可设为当场失败，也可预置"表里本来就有的槽位"。
 
     `existing_slots` ＝ 业主此前给过、已经落在业务侧真相里的那些——会话侧重启后按属主问回来的就是它。
+    **判"派不派活"时它与这一轮报上去的一并算**：业务侧那边是查表判里程碑，不是只看这一批。
+
+    `dispatches=False` ＝ 业务侧收下了事实、但一个任务都没铸——真机 2026-09-08 就是这样：
+    项目昨天收到三张图后已迁到 M1，M1 的 `on_enter` 是空的、补派的射程是"图还没出来的时候"，
+    **不派是对的**（不为业主已经拿到的图再烧一次钱）。
     """
 
     def __init__(
-        self, *, failing: bool = False, existing_slots: Sequence[BusinessSlot] = ()
+        self,
+        *,
+        failing: bool = False,
+        existing_slots: Sequence[BusinessSlot] = (),
+        dispatches: bool = True,
     ) -> None:
         self.failing = failing
         self.existing_slots = tuple(existing_slots)
+        self.dispatches = dispatches
         self.find_calls: list[tuple[int, str, str]] = []
         self.fills: list[tuple[str, list[SlotFill]]] = []
 
@@ -95,10 +105,16 @@ class FakeBusiness:
         if self.failing:
             raise ProjectClientError("业务侧连不上（测试）")
         self.fills.append((project_id, list(slots)))
-        keys = {slot.slot_key for _, batch in self.fills for slot in batch}
-        advanced = {"floorplan", "building_area_sqm"} <= keys
+        keys = {slot.slot_key for slot in self.existing_slots}
+        keys |= {slot.slot_key for _, batch in self.fills for slot in batch}
+        advanced = self.dispatches and {"floorplan", "building_area_sqm"} <= keys
+        # 里程碑名会话侧不看（不判里程碑，红线）：它看的只有 created_task_ids 空不空
         return MilestoneProgress(
-            project_id, "M0.5" if advanced else "M0", advanced, [], ["01TASK"] if advanced else []
+            project_id,
+            "M0.5" if advanced else ("M1" if not self.dispatches else "M0"),
+            advanced,
+            [],
+            ["01TASK"] if advanced else [],
         )
 
 
@@ -358,6 +374,141 @@ async def test_without_business_gateway_nothing_is_reported() -> None:
     await service.ingest_message(inbound_image("m-1"), sender, llm)
     project = await find_or_create_project(conversation_ref())
     assert project.reported_slots == {}
+
+
+# ---------------------------------------------------------------------------
+# "我这就为你做设计"：说这句当且仅当业务侧真铸了任务（用户裁决 2026-09-08）
+#
+# 成因是同日真机 18:47—18:48：业主发图三轮，业务侧三次回执全是 `tasks=[]`（项目昨天收到三张图
+# 后已在 M1，补派射程是"图还没出来的时候"——**不派是对的**），系统照旧说"我这就为你做设计"。
+# **错的是嘴不是脑子**：拿过一次图的业主，此后每次发图都会被告知"在做"，然后永远等不到。
+# ---------------------------------------------------------------------------
+
+
+async def test_no_task_dispatched_means_the_design_start_sentence_is_never_said() -> None:
+    """业务侧回 `created_task_ids=[]` 时，出站里**不许出现任何开工承诺**。
+
+    这是本次的头号门禁：判据从"面积与户型图两样齐了那一轮"改成"业务侧这一轮真铸了任务"。
+    业主收到的是一句干回执——为什么不多说一个字，理由写在 `NO_WORK_DISPATCHED_MESSAGES`。
+    """
+    business = FakeBusiness(
+        dispatches=False,
+        existing_slots=[
+            BusinessSlot("building_area_sqm", "138", "observed", "m-0906"),
+            BusinessSlot("floor_area_ratio_percent", "81", "observed", "m-0906"),
+        ],
+    )
+    sender = CapturingSender()
+    llm = FakeLlm(intents=[intent_json("provide_info")], turns=[])
+
+    await service.ingest_message(inbound_image("m-1"), sender, llm, business=business)
+
+    # 报是照报的（业务侧照样收到"他又发了一次图"），只是它这一轮没铸任务
+    assert [s.slot_key for _, batch in business.fills for s in batch] == ["floorplan"]
+    texts = [m.text.text for m in sender.sent if m.WhichOneof("content") == "text"]
+    assert texts == list(service.NO_WORK_DISPATCHED_MESSAGES)
+    assert all(service.DESIGN_START_MESSAGES[0] not in t for t in texts)
+    for promise in ("做设计", "稍等", "正在", "预计"):
+        assert all(promise not in t for t in texts), promise
+
+
+async def test_a_dispatched_task_is_what_makes_the_design_start_sentence_true() -> None:
+    """业务侧回 `created_task_ids=['01TASK']` 时才说那一句——**同一段输入，只有回执不同**。
+
+    与上一条成对：两条测试的入站消息与快照完全一样，差别只在业务侧铸没铸任务。
+    说过一次就不再说（`design_start_told`）：他下一轮再问，回的是模型写的话，不是复读。
+    """
+    business = FakeBusiness(
+        existing_slots=[BusinessSlot("building_area_sqm", "138", "observed", "m-0906")]
+    )
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")] * 2, turns=[turn_json([], "阳台那面窗我会留着。")]
+    )
+
+    await service.ingest_message(inbound_image("m-1"), sender, llm, business=business)
+
+    texts = [m.text.text for m in sender.sent if m.WhichOneof("content") == "text"]
+    assert texts == list(service.DESIGN_START_MESSAGES)
+
+    await service.ingest_message(inbound_text("阳台能封吗", "m-2"), sender, llm, business=business)
+
+    later = [m.text.text for m in sender.sent[len(texts) :]]
+    assert later == ["阳台那面窗我会留着。"]
+
+
+async def test_the_2026_09_08_transcript_never_promises_what_is_not_running() -> None:
+    """拿 2026-09-08 18:47 那段真机对话当靶子重放一遍：一句开工承诺都不许再出去。
+
+    原文（`svc_chat.messages` 取的，业务侧同期三条日志全是 `tasks=[]`）——
+    18:47:36 业主[图片] / 18:47:38 系统"我这就为你做设计，请稍等。" /
+    18:47:38 业主"138平米，81%得房率" / 18:47:42 系统"已确认建筑面积138㎡、得房率81%。" /
+    18:47:43 系统"户型图已收到，正在解析中。" / 18:48:28 业主"怎么样了" /
+    18:48:33 系统"户型图已收到，正在解析结构与空间关系。" + "解析完成后，我会基于…生成…" /
+    18:48:45 业主"大概要多久？" / 18:48:51 系统"正在解析你上传的户型图，预计2分钟内完成。"
+
+    **这条测试只拦得住系统自己写的那半**（第一句），因为后面那些是模型写的自由文本——
+    脚本里原样放着它当天写的那几条，正是为了让"哪半拦住了、哪半没拦住"看得见：
+    模型那半今天是提示词纪律（禁令与判据写在 `orchestrator._SYSTEM_PROMPT` 上方的注释里），
+    这里断言的是**它写的那些话与开工承诺无关地过去了，而系统一句开工话都没说**。
+    """
+    business = FakeBusiness(
+        dispatches=False,
+        existing_slots=[
+            BusinessSlot("building_area_sqm", "138", "observed", "m-0906"),
+            BusinessSlot("floorplan", FLOORPLAN_KEY, "observed", "m-0906"),
+        ],
+    )
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")] * 4,
+        turns=[
+            # 18:47:42—18:48:51 那三轮模型当天真写的话，一字未改
+            json.dumps(
+                {"facts": [AREA_FACT], "replies": ["已确认建筑面积138㎡、得房率81%。"]},
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "facts": [],
+                    "replies": [
+                        "户型图已收到，正在解析结构与空间关系。",
+                        "解析完成后，我会基于138㎡建筑面积和81%得房率，生成符合你家实际的初步设计方案。",
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            json.dumps(
+                {
+                    "facts": [],
+                    "replies": [
+                        "正在解析你上传的户型图，预计2分钟内完成。",
+                        "解析后将自动生成符合138㎡和81%得房率的初步设计方案。",
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        ],
+    )
+
+    await service.ingest_message(inbound_image("m-1"), sender, llm, business=business)
+    first_turn = [m.text.text for m in sender.sent]
+    await service.ingest_message(
+        inbound_text("138平米，81%得房率", "m-2"), sender, llm, business=business
+    )
+    await service.ingest_message(inbound_text("怎么样了", "m-3"), sender, llm, business=business)
+    await service.ingest_message(
+        inbound_text("大概要多久？", "m-4"), sender, llm, business=business
+    )
+
+    # 那一轮（18:47:36 的图）是"两样齐"那一轮：系统文案接管，说的是回执不是开工话
+    assert first_turn == list(service.NO_WORK_DISPATCHED_MESSAGES)
+    texts = [m.text.text for m in sender.sent if m.WhichOneof("content") == "text"]
+    assert all(service.DESIGN_START_MESSAGES[0] not in t for t in texts)
+    # 一个任务都没铸，`design_start_told` 就一直是假：他再发十轮也说不出那句
+    project = await find_or_create_project(conversation_ref())
+    assert project.design_start_told is False
+    assert project.two_inputs_turn_passed is True
 
 
 # ---------------------------------------------------------------------------

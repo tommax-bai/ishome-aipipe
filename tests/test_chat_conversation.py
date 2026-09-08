@@ -19,6 +19,7 @@ from chat.channel_client import ChannelClient
 from chat.grpc_server import build_server
 from chat.intent import parse_intent, route_intent
 from chat.models import ConversationRef, Fact, ProjectState
+from chat.project_client import BusinessProject, MilestoneProgress, SlotFill
 from chat.repo import active_store, find_or_create_project, reset_conversations, reset_messages
 from chat.repo.memory import MemoryChatStore
 from ishome.channel.v1 import message_pb2
@@ -30,6 +31,7 @@ from ishome.design.v1 import service_pb2_grpc as design_service_pb2_grpc
 
 MOCK_INSTANCE = "mock:local"
 USER = "u-test"
+FLOORPLAN_KEY = "uploads/" + "a" * 64 + "/original.png"
 
 ALL_SLOT_FACTS: list[dict[str, Any]] = [
     {
@@ -144,6 +146,34 @@ class FixedCapability:
         return self.supports
 
 
+class DispatchingBusiness:
+    """会派活的业务侧假件：户型图对象键与建筑面积都到手就铸一个任务。
+
+    **两样齐那一轮的形态测试都得挂着它**：那一轮说不说"我这就为你做设计"，判据是业务侧回执里
+    `created_task_ids` 空不空（用户裁决 2026-09-08）——不挂业务侧就没有回执，也就没有那句话。
+    判据本身的门禁（回执空 / 不空各说什么）在 `test_chat_wiring.py`，那儿有更全的业务侧假件。
+    """
+
+    def __init__(self) -> None:
+        self.slots: dict[str, str] = {}
+
+    async def find_or_create_project(
+        self, channel_type: int, channel_instance: str, external_user_id: str
+    ) -> BusinessProject:
+        return BusinessProject("01PROJ", "M0", "v1", created=False)
+
+    async def fill_slots(self, project_id: str, slots: Sequence[SlotFill]) -> MilestoneProgress:
+        self.slots.update({slot.slot_key: slot.value for slot in slots})
+        dispatched = {"floorplan", "building_area_sqm"} <= set(self.slots)
+        return MilestoneProgress(
+            project_id,
+            "M0.5" if dispatched else "M0",
+            dispatched,
+            [],
+            ["01TASK"] if dispatched else [],
+        )
+
+
 def intent_json(intent: str) -> str:
     return json.dumps({"intent": intent})
 
@@ -170,6 +200,15 @@ def make_inbound(
         )
     else:
         msg.text.CopyFrom(message_pb2.TextContent(text=text or ""))
+    return msg
+
+
+def make_image_inbound(
+    message_id: str, object_key: str = FLOORPLAN_KEY
+) -> message_pb2.UnifiedMessage:
+    """业主发来一张户型图。**带对象键**：没有键业务侧就没有可派活的入参，也就不会铸任务。"""
+    msg = make_inbound(None, message_id)
+    msg.image.CopyFrom(message_pb2.ImageContent(mime_type="image/png", object_key=object_key))
     return msg
 
 
@@ -421,17 +460,22 @@ async def test_structural_facts_never_confirmable() -> None:
 
 @pytest.mark.asyncio
 async def test_two_inputs_in_says_only_that_design_started() -> None:
-    """两样齐了那一轮：业主**只收到一句**"我这就为你做设计"，**里面没有问号**。
+    """两样齐、业务侧也真派了活那一轮：业主**只收到一句**"我这就为你做设计"，**里面没有问号**。
 
     脚本用的就是 2026-09-07 真机那一轮模型写的三条（复述 + 进度播报 + 追问人数与核心诉求）——
     用户原话"这会不应该提问""这是三段话说的太冗余了，我们只需要回复一句"。
     **不靠提示词纪律**：这一轮模型写的回复整批作废，它产不出出现在业主那头的问号。
     假设那套同样一个字都不许提前漏出来（裁决 8-31：产出送到之后才说）。
+
+    **前一轮先把图发进来**：那句话的判据 2026-09-08 改成了"业务侧这一轮真铸了任务"，
+    而业务侧要铸任务得先有户型图的对象键。
     """
+    business = DispatchingBusiness()
     sender = CapturingSender()
     llm = FakeLlm(
-        intents=[intent_json("provide_info")],
+        intents=[intent_json("provide_info"), intent_json("provide_info")],
         turns=[
+            turn_json([], "收到图了。"),
             json.dumps(
                 {
                     "facts": ALL_SLOT_FACTS,
@@ -442,13 +486,17 @@ async def test_two_inputs_in_says_only_that_design_started() -> None:
                     ],
                 },
                 ensure_ascii=False,
-            )
+            ),
         ],
     )
+    await service.ingest_message(make_image_inbound("in-img"), sender, llm, business=business)
+    before = len(sender.sent)
 
-    await service.ingest_message(make_inbound("138平米，81%得房率"), sender, llm)
+    await service.ingest_message(
+        make_inbound("138平米，81%得房率", "in-two"), sender, llm, business=business
+    )
 
-    texts = [m.text.text for m in sender.sent]
+    texts = [m.text.text for m in sender.sent[before:]]
     assert texts == list(service.DESIGN_START_MESSAGES)
     assert "？" not in texts[0] and "?" not in texts[0]
     # 模型这一轮写的三条一条都没出去
@@ -468,17 +516,16 @@ async def test_the_turn_that_completes_the_two_inputs_never_calls_the_orchestrat
     9-01 记的判据是"真机再出现一次就做"，9-07 真机第二次出现（用户裁决当场拍板）。
     脚本里只放一轮编排输出：第二轮若还调模型，`pop` 空列表当场报错。
     """
+    business = DispatchingBusiness()
     sender = CapturingSender()
     llm = FakeLlm(
         intents=[intent_json("provide_info"), intent_json("provide_info")],
         turns=[turn_json([ALL_SLOT_FACTS[2]], "面积记下了，再发张户型图给我。")],
     )
-    await service.ingest_message(make_inbound("138 平", "in-c1"), sender, llm)
+    await service.ingest_message(make_inbound("138 平", "in-c1"), sender, llm, business=business)
     before = len(sender.sent)
-    image = make_inbound(None, "in-c2")
-    image.image.SetInParent()
 
-    await service.ingest_message(image, sender, llm)
+    await service.ingest_message(make_image_inbound("in-c2"), sender, llm, business=business)
 
     assert llm.calls.count(orchestrator.ORCHESTRATOR_MODEL) == 1  # 第一轮调过，这一轮没调
     assert [m.text.text for m in sender.sent[before:]] == list(service.DESIGN_START_MESSAGES)
@@ -492,6 +539,7 @@ async def test_the_design_start_turn_still_refuses_spoken_structure() -> None:
     两条路径——口述结构不作设计依据、要么不动结构要么给硬证据。少说它等于闷掉一条红线，
     而它本身不含问号，"结构上问不出来"那条保证不受影响。
     """
+    business = DispatchingBusiness()
     sender = CapturingSender()
     structural_fact = {
         "target_id": "wall-living-north",
@@ -501,22 +549,31 @@ async def test_the_design_start_turn_still_refuses_spoken_structure() -> None:
         "cognitive_state": "observed",
     }
     llm = FakeLlm(
-        intents=[intent_json("provide_info")],
-        turns=[turn_json([*ALL_SLOT_FACTS, structural_fact], "都记下了。")],
+        intents=[intent_json("provide_info"), intent_json("provide_info")],
+        turns=[
+            turn_json([], "收到图了。"),
+            turn_json([*ALL_SLOT_FACTS, structural_fact], "都记下了。"),
+        ],
+    )
+    await service.ingest_message(make_image_inbound("in-s0"), sender, llm, business=business)
+    before = len(sender.sent)
+
+    await service.ingest_message(
+        make_inbound("138 平，北墙是承重墙", "in-s1"), sender, llm, business=business
     )
 
-    await service.ingest_message(make_inbound("138 平，图发你了，北墙是承重墙"), sender, llm)
-
-    texts = [m.text.text for m in sender.sent]
+    texts = [m.text.text for m in sender.sent[before:]]
     assert texts == [*orchestrator.structural_notes(), *service.DESIGN_START_MESSAGES]
     assert all("？" not in t and "?" not in t for t in texts)
 
 
 @pytest.mark.asyncio
-async def test_turns_after_the_design_start_still_go_through_the_model() -> None:
-    """射程只到"两样齐那一轮"：**此后的轮次照旧走模型**，会话不变哑。
+async def test_turns_after_the_system_text_took_over_still_go_through_the_model() -> None:
+    """系统文案接管的射程只到"两样齐那一轮"：**此后的轮次照旧走模型**，会话不变哑。
 
-    开工也只报一次——每轮再说一遍就成了复读。
+    这一条挂的是接管本身，不是那句开工话（**接管归接管，说哪一句另有判据**：业务侧真派了活
+    才说"我这就为你做设计"，裁决 2026-09-08）——所以这里不挂业务侧，两样齐那一轮出的是回执。
+    钉住的事实是：接管过一次之后，`two_inputs_turn_passed` 就不让它再接管第二次。
     """
     sender = CapturingSender()
     llm = FakeLlm(
@@ -525,6 +582,7 @@ async def test_turns_after_the_design_start_still_go_through_the_model() -> None
     )
     await service.ingest_message(make_inbound("138 平，图发你了", "in-d1"), sender, llm)
     before = len(sender.sent)
+    assert [m.text.text for m in sender.sent] == list(service.NO_WORK_DISPATCHED_MESSAGES)
 
     await service.ingest_message(make_inbound("阳台能封吗", "in-d2"), sender, llm)
 
@@ -610,6 +668,7 @@ def test_every_message_we_write_ourselves_says_one_thing() -> None:
     written_by_us = [
         service.FALLBACK_REPLY,
         *service.DESIGN_START_MESSAGES,
+        *service.NO_WORK_DISPATCHED_MESSAGES,
         *orchestrator.structural_notes(),
         # 假设那几条的字面随面积变（人数、装修倾向与理由都是算出来的），四档各量一遍
         *(
@@ -622,6 +681,77 @@ def test_every_message_we_write_ourselves_says_one_thing() -> None:
     for text in written_by_us:
         assert "\n" not in text, text
         assert len(text) <= orchestrator.ONE_THING_MAX_CHARS, f"{len(text)} 字：{text}"
+
+
+# --- 进度与时间：系统里有没有活在跑，只有业务侧回执说得算 ---
+
+
+def test_nothing_we_write_ourselves_claims_progress_or_promises_a_time() -> None:
+    """系统写死的文案里，**没有一句谈系统内部在做什么、也没有一句给时间**。
+
+    词表就是 2026-09-08 真机上冒出来的那几句的词根——"户型图已收到，正在解析中"
+    "正在解析结构与空间关系""预计2分钟内完成"——那一整段对话背后业务侧三次回执全是
+    `tasks=[]`，**一个活都没在跑**。会话侧压根没有"进度"这个事实可给：有没有活在跑、
+    跑到哪一步、还要多久，只有业务侧的回执说得算（而回执只说这一轮铸没铸任务）。
+
+    **名单比"一条一件事"那条宽**：那条管长度与条数，今天不发给业主的文案不用守；
+    这条管真不真，**哪天发都不许是假的**——所以确认回执（`confirm_ack_text`，时点已挪到
+    真有产出可确认时、今天不发）也在名单里。它原文写着"这部分能力正在接入，完成后会直接发到
+    这个对话里"，醒过来的那天就会原样发给业主，2026-09-08 一并删掉。
+    """
+    written_by_us = [
+        service.FALLBACK_REPLY,
+        *service.DESIGN_START_MESSAGES,
+        *service.NO_WORK_DISPATCHED_MESSAGES,
+        *service.REPORT_FAILED_MESSAGES,
+        *service.GENERATION_FAILED_MESSAGES,
+        *service.DELIVERABLE_CAPTIONS.values(),
+        *orchestrator.structural_notes(),
+        orchestrator.confirm_ack_text(),
+        *(
+            text
+            for area in (60.0, 92.0, 138.0, 220.0)
+            for text in assumption_messages(infer_from_area(area))
+        ),
+    ]
+
+    for text in written_by_us:
+        for claim in ("正在", "解析中", "处理中", "生成中", "预计", "分钟", "马上", "很快"):
+            assert claim not in text, f"{claim}：{text}"
+
+
+@pytest.mark.asyncio
+async def test_the_model_is_never_licensed_to_invent_progress() -> None:
+    """递给模型的那份上下文里，**没有任何东西授权它承诺进度**——禁令在，许诺不在。
+
+    2026-09-08 真机：业主连问"怎么样了""大概要多久？"，模型写出"正在解析结构与空间关系"
+    "预计2分钟内完成""解析后将自动生成…"，而那三轮业务侧回执全是 `tasks=[]`。
+    **提示词里当时没有一个字授权它这么说，但有一句话给了它由头**：缺口清空之后那段写着
+    "推完了会主动告诉他按什么做的"——**它看不见就说不出**，所以先把那句拿掉（结构那半，
+    同"不给它看内部字段名"），再加一条明写的禁令（纪律那半）。
+
+    **纪律那半今天拦不成结构，理由与判据写死在 `orchestrator._SYSTEM_PROMPT` 上方的注释里**：
+    真机再出现一次进度承诺就做出站口逐条判定。这条测试只守得住"禁令与许诺"这两样的在与不在。
+    """
+    project = ProjectState(project_id="p-progress", user_id="u-progress")
+    orchestrator.merge_facts(
+        project,
+        [
+            orchestrator.upload_fact(),
+            *orchestrator.parse_turn(turn_json([ALL_SLOT_FACTS[2]], "")).facts,
+        ],
+    )
+    assert orchestrator.missing_slots(project) == []  # 缺口为空那一支才是真机那几轮的形态
+    llm = FakeLlm(turns=[turn_json([], "还没有可以告诉你的。")])
+
+    await orchestrator.step(llm, project, [], "怎么样了")
+
+    given_to_the_model = llm.turn_prompts[0]
+    assert "绝不播报进度" in given_to_the_model
+    assert "预计 X 分钟" in given_to_the_model
+    assert "不要交代系统这会儿在做什么" in given_to_the_model
+    # 真机那句"解析后将自动生成…"的由头：这句话在，模型就替系统许下了后续
+    assert "会主动告诉他" not in given_to_the_model
 
 
 # --- 幂等与兜底 ---
