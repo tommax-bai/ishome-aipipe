@@ -45,14 +45,27 @@ class LiteLlmClient:
         model: str,
         messages: Sequence[Mapping[str, str]],
         *,
+        call_point: str,
+        run_ref: str | None = None,
         json_mode: bool = False,
     ) -> str:
         """一次补全调用，返回首个 choice 的文本内容。
 
         model 只接受任务级逻辑模型名；json_mode 请求 JSON 输出（网关
         drop_params 兜底不支持的物理模型）。
+
+        `call_point`（这次调用是哪一处 AI 判断）与 `run_ref`（属于哪次运行）随请求体
+        `metadata` 送给网关，落进网关那侧的调用记录。键名与形状由记录那边定
+        （infra 的 `custom/ledger_callback.py` 从 `metadata` 里认这两个键），这里照抄。
+
+        `call_point` **必填、不给默认值**：漏传的调用点要在类型检查与测试里当场露出来；
+        给个默认值等于让它悄悄记到 `unregistered` 名下。`run_ref` 取不到就是 None，不编。
         """
-        payload: dict[str, Any] = {"model": model, "messages": list(messages)}
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": list(messages),
+            "metadata": {"call_point": call_point, "run_ref": run_ref},
+        }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         response = await self._http().post(

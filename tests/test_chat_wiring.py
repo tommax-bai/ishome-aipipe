@@ -41,10 +41,18 @@ class FakeLlm:
     def __init__(self, intents: list[str], turns: list[str]) -> None:
         self.intents = intents
         self.turns = turns
+        self.marks: list[tuple[str, str | None]] = []
 
     async def complete(
-        self, model: str, messages: Sequence[Mapping[str, str]], *, json_mode: bool = False
+        self,
+        model: str,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        json_mode: bool = False,
     ) -> str:
+        self.marks.append((call_point, run_ref))
         if model == "design-intent.default":
             return self.intents.pop(0)
         if model == "design-orchestrator.default":

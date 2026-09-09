@@ -697,7 +697,8 @@ async def _converse(
     他这一轮真提了承重墙就仍要说。
     """
     checklist_open = bool(project.open_confirmation_ids)
-    intent = await _route(inbound, user_text, llm, checklist_open=checklist_open)
+    run_ref = _turn_run_ref(conversation, inbound)
+    intent = await _route(inbound, user_text, llm, checklist_open=checklist_open, run_ref=run_ref)
 
     if intent == "confirm_checklist" and checklist_open:
         upgraded = orchestrator.upgrade_confirmed(project)
@@ -724,7 +725,9 @@ async def _converse(
     if _two_inputs_turn_due(project):
         return _two_inputs_turn(project, asserted_slot_keys)
 
-    turn = await orchestrator.step(llm, project, await get_history(conversation), user_text)
+    turn = await orchestrator.step(
+        llm, project, await get_history(conversation), user_text, run_ref=run_ref
+    )
     structural = orchestrator.merge_facts(project, turn.facts)
     asserted_slot_keys |= _asserted_slot_keys(turn.facts)
     # 修正已确认信息 → 撤下确认标记，走重新确认回路
@@ -829,12 +832,26 @@ def _pacing_seconds(previous_text: str) -> float:
     )
 
 
+def _turn_run_ref(
+    conversation: ConversationRef, inbound: message_pb2.UnifiedMessage
+) -> str | None:
+    """这一轮的运行编号：会话键 + 本轮入站消息 id，给网关那侧的调用记录用。
+
+    **两样都是现成的**：会话键是 `svc_chat.conversations` 的自然键，入站消息 id 是渠道给的、
+    本来就当去重键与回话幂等前缀（`reply-<message_id>`）用——不为调用记录另造一个标识。
+    一轮 = 一条入站消息，所以消息 id 就是"第几轮"；分类与编排是同一轮里的两次调用，
+    带同一个编号，事后才串得回同一轮。渠道没给消息 id 时退回只有会话键，不编一个。
+    """
+    return f"{conversation.key}#{inbound.message_id}" if inbound.message_id else conversation.key
+
+
 async def _route(
     inbound: message_pb2.UnifiedMessage,
     user_text: str,
     llm: LlmCompletion,
     *,
     checklist_open: bool,
+    run_ref: str | None = None,
 ) -> intent_router.Intent:
     """意图路由；quick_reply 选择直通（输入归一化 v1 路径），文本走分类模型。"""
     if inbound.WhichOneof("content") == "quick_reply":
@@ -844,7 +861,9 @@ async def _route(
         if selected == orchestrator.CORRECT_OPTION_ID:
             return "correct_checklist"
         return "other"
-    return await intent_router.route_intent(llm, user_text, checklist_open=checklist_open)
+    return await intent_router.route_intent(
+        llm, user_text, checklist_open=checklist_open, run_ref=run_ref
+    )
 
 
 async def _supports_quick_reply(

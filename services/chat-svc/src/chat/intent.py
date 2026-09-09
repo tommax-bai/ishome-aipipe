@@ -14,6 +14,12 @@ from typing import Literal, Protocol
 INTENT_MODEL = "design-intent.default"
 """意图路由逻辑模型名（低延迟档；物理映射见 infra LiteLLM 配置）。"""
 
+CALL_POINT = "chat-intent"
+"""这一处 AI 判断在调用记录里的名字（判官台的基本信息表定的，照抄不改）。
+
+与逻辑模型名不是一回事：模型名说"用哪个模型"，这个名字说"这次调用在判什么"。
+"""
+
 Intent = Literal[
     "provide_info",  # 提供信息（户型/家庭/诉求/尺寸……）
     "confirm_checklist",  # 确认清单：确认无误
@@ -43,13 +49,19 @@ _INTENT_SYSTEM_PROMPT = """\
 
 
 class LlmCompletion(Protocol):
-    """LLM 补全协议位（结构化子集，实现见 llm_client；测试用 FakeLLM）。"""
+    """LLM 补全协议位（结构化子集，实现见 llm_client；测试用 FakeLLM）。
+
+    `call_point`（这次调用是哪一处 AI 判断）必填不给默认值——漏传要当场露出来；
+    `run_ref`（属于哪次运行）取不到就是 None。两样都只随请求送进网关的调用记录。
+    """
 
     async def complete(
         self,
         model: str,
         messages: Sequence[Mapping[str, str]],
         *,
+        call_point: str,
+        run_ref: str | None = None,
         json_mode: bool = False,
     ) -> str: ...
 
@@ -66,8 +78,14 @@ def parse_intent(raw: str) -> Intent:
     return "provide_info"
 
 
-async def route_intent(llm: LlmCompletion, text: str, *, checklist_open: bool) -> Intent:
-    """分类一条文本消息（quick_reply 选择在 service 层直通，不经过这里）。"""
+async def route_intent(
+    llm: LlmCompletion, text: str, *, checklist_open: bool, run_ref: str | None = None
+) -> Intent:
+    """分类一条文本消息（quick_reply 选择在 service 层直通，不经过这里）。
+
+    `run_ref` 是这一轮的运行编号，由 service 层给（会话键 + 本轮入站消息 id），
+    只往下透传进调用记录——分类与编排是同一轮里的两次调用，靠它才串得回同一轮。
+    """
     if checklist_open and text.strip() in _CONFIRM_SHORTCUTS:
         return "confirm_checklist"
     raw = await llm.complete(
@@ -81,6 +99,8 @@ async def route_intent(llm: LlmCompletion, text: str, *, checklist_open: bool) -
             },
             {"role": "user", "content": text},
         ],
+        call_point=CALL_POINT,
+        run_ref=run_ref,
         json_mode=True,
     )
     intent = parse_intent(raw)

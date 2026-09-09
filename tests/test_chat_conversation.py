@@ -99,15 +99,20 @@ class FakeLlm:
         self.turns = turns or []
         self.calls: list[str] = []
         self.turn_prompts: list[str] = []
+        self.marks: list[tuple[str, str | None]] = []
+        """每次调用带的两个标记：这是哪一处 AI 判断、属于哪一轮。"""
 
     async def complete(
         self,
         model: str,
         messages: Sequence[Mapping[str, str]],
         *,
+        call_point: str,
+        run_ref: str | None = None,
         json_mode: bool = False,
     ) -> str:
         self.calls.append(model)
+        self.marks.append((call_point, run_ref))
         if model == "design-intent.default":
             return self.intents.pop(0)
         if model == "design-orchestrator.default":
@@ -122,6 +127,8 @@ class BrokenLlm:
         model: str,
         messages: Sequence[Mapping[str, str]],
         *,
+        call_point: str,
+        run_ref: str | None = None,
         json_mode: bool = False,
     ) -> str:
         raise RuntimeError("gateway down")
@@ -247,6 +254,39 @@ async def test_confirm_shortcut_skips_llm() -> None:
 async def test_confirm_intent_without_open_checklist_degrades() -> None:
     llm = FakeLlm(intents=[intent_json("confirm_checklist")])
     assert await route_intent(llm, "都对", checklist_open=False) == "provide_info"
+
+
+# --- 调用记录的两个标记 ---
+
+
+@pytest.mark.asyncio
+async def test_both_calls_name_themselves_and_share_one_run_ref() -> None:
+    """一轮里的两次调用各报自己那处 AI 判断的名字，运行编号是同一个——
+    网关那侧只看得见逻辑模型名，串得回"这两次是同一轮"靠的就是这个编号。
+
+    编号＝会话键 + 本轮入站消息 id，两样都是现成的（会话表的自然键、渠道给的消息 id，
+    后者本来就当去重键与回话幂等前缀用），不为调用记录另造一个标识。
+    """
+    sender = CapturingSender()
+    llm = FakeLlm(
+        intents=[intent_json("provide_info")],
+        turns=[turn_json([ALL_SLOT_FACTS[0]], "记下了。")],
+    )
+    await service.ingest_message(make_inbound("我家在翠湖天地", "in-mark"), sender, llm)
+
+    expected_run_ref = f"{conversation_ref().key}#in-mark"
+    assert llm.marks == [
+        ("chat-intent", expected_run_ref),
+        ("chat-orchestrate", expected_run_ref),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_route_intent_without_a_run_ref_sends_none_not_an_invented_one() -> None:
+    """拿不到运行编号就落 None，AI 判断名照样带——不编一个。"""
+    llm = FakeLlm(intents=[intent_json("provide_info")])
+    await route_intent(llm, "我家在翠湖天地", checklist_open=False)
+    assert llm.marks == [("chat-intent", None)]
 
 
 # --- 事实抽取与认知状态 ---

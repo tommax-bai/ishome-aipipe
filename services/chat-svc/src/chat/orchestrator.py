@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 ORCHESTRATOR_MODEL = "design-orchestrator.default"
 """主对话逻辑模型名（物理映射见 infra LiteLLM 配置）。"""
 
+CALL_POINT = "chat-orchestrate"
+"""这一处 AI 判断在调用记录里的名字（判官台的基本信息表定的，照抄不改）。"""
+
 CHECKLIST_MARKER = "【确认清单】"
 """确认清单消息的稳定前缀（E2E 与测试断言不变量）。"""
 
@@ -46,13 +49,19 @@ ONE_THING_MAX_CHARS = 60
 
 
 class LlmCompletion(Protocol):
-    """LLM 补全协议位（结构化子集，实现见 llm_client；测试用 FakeLLM）。"""
+    """LLM 补全协议位（结构化子集，实现见 llm_client；测试用 FakeLLM）。
+
+    `call_point`（这次调用是哪一处 AI 判断）必填不给默认值——漏传要当场露出来；
+    `run_ref`（属于哪次运行）取不到就是 None。两样都只随请求送进网关的调用记录。
+    """
 
     async def complete(
         self,
         model: str,
         messages: Sequence[Mapping[str, str]],
         *,
+        call_point: str,
+        run_ref: str | None = None,
         json_mode: bool = False,
     ) -> str: ...
 
@@ -206,8 +215,14 @@ async def step(
     project: ProjectState,
     history: Sequence[ConversationTurn],
     user_text: str,
+    *,
+    run_ref: str | None = None,
 ) -> OrchestratorTurn:
-    """一轮对话编排：抽取事实 + 生成回复（单次 LLM 调用控制延迟与成本）。"""
+    """一轮对话编排：抽取事实 + 生成回复（单次 LLM 调用控制延迟与成本）。
+
+    `run_ref` 是这一轮的运行编号，由 service 层给（会话键 + 本轮入站消息 id），
+    只往下透传进调用记录，不参与任何判断。
+    """
     state_lines = [_render_fact_line(f) for f in project.base_facts.facts]
     # **一次只递一个缺口**：模型看不见第二个缺口，就问不出第二个问题。
     # 提示词里写过"一次只问一件事"，真机两跑都是一轮问三件——纪律禁不住，结构禁得住
@@ -238,7 +253,9 @@ async def step(
     for turn in history:
         messages.append({"role": turn.role, "content": turn.text})
     messages.append({"role": "user", "content": user_text})
-    raw = await llm.complete(ORCHESTRATOR_MODEL, messages, json_mode=True)
+    raw = await llm.complete(
+        ORCHESTRATOR_MODEL, messages, call_point=CALL_POINT, run_ref=run_ref, json_mode=True
+    )
     return parse_turn(raw)
 
 
