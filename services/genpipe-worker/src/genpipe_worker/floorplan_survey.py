@@ -19,6 +19,14 @@ from pydantic import ValidationError
 
 from genpipe_worker.models import FloorplanSurvey, RoomRegion, VisionReader
 
+CALL_POINT = "floorplan-survey"
+"""这一处 AI 判断在调用记录里的名字（判官台的基本信息表定的，照抄不改）。
+
+写在这儿而不是调用处：勘测这件事叫什么，由勘测这一步自己说，改名字只改一处。
+它与逻辑模型名不是一回事——`floorplan-parse.default` 一个模型名被勘测 / 近景 / 判定
+三步共用，网关只看得见模型名，分得开三步靠的就是这个名字。
+"""
+
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 _THOUSANDTH_GRID = 1000.0
 """Qwen-VL 系模型报框的自家惯例：整图按 0~1000 的网格给坐标。提示词要的是 0~1，但真跑
@@ -115,10 +123,22 @@ async def survey_floorplan(
     image_media_type: str,
     reader: VisionReader,
     logical_model: str,
+    *,
+    run_ref: str | None = None,
 ) -> FloorplanSurvey:
-    """跑勘测一步。"""
+    """跑勘测一步。
+
+    `run_ref` 是这次运行的编号（activity 里跑就是 workflow id），只往下透传进调用记录，
+    不参与任何判断；CLI 跑没有 workflow，传 None。
+    """
     system_prompt, user_prompt = build_survey_prompts()
     raw = await reader.complete_with_image(
-        logical_model, system_prompt, user_prompt, image_bytes, image_media_type
+        logical_model,
+        system_prompt,
+        user_prompt,
+        image_bytes,
+        image_media_type,
+        call_point=CALL_POINT,
+        run_ref=run_ref,
     )
     return parse_survey_output(raw)

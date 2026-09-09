@@ -30,11 +30,20 @@ class _FakeLlm:
     def __init__(self, payload: object) -> None:
         self.payload = payload
         self.prompts: list[str] = []
+        self.marks: list[tuple[str, str | None]] = []
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str:
         self.prompts.append(user_prompt)
+        self.marks.append((call_point, run_ref))
         return json.dumps(self.payload, ensure_ascii=False)
 
 
@@ -119,11 +128,20 @@ class _SequencedLlm:
     def __init__(self, payloads: list[object]) -> None:
         self.payloads = list(payloads)
         self.prompts: list[str] = []
+        self.marks: list[tuple[str, str | None]] = []
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str:
         self.prompts.append(user_prompt)
+        self.marks.append((call_point, run_ref))
         return json.dumps(self.payloads.pop(0), ensure_ascii=False)
 
 
@@ -146,3 +164,39 @@ async def test_too_few_notes_are_rewritten_with_reasons_then_accepted() -> None:
     assert len(llm.prompts) == 2
     assert "上一稿被打回的原因" in llm.prompts[1]
     assert "一条依据都没引" in llm.prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_each_draft_names_itself_and_which_draft_it_is() -> None:
+    """两稿都报同一个 AI 判断名，运行编号再拼稿次——不拼的话两条记录看着一样。"""
+    thin = {"notes": [{"room": "主卧", "text": "主卧很亮", "cites": []}]}
+    good = {
+        "notes": [
+            {"room": "主卧", "text": "早上先亮起来的是这间", "cites": ["plan-daylight-主卧"]},
+            {"room": "阳台", "text": "阳台又长又窄", "cites": ["plan-shape-阳台"]},
+            {"room": "玄关", "text": "玄关不大够放鞋柜", "cites": ["plan-share-玄关"]},
+        ]
+    }
+    llm = _SequencedLlm([thin, good])
+
+    await write_notes(_FACTS, _ROOMS, llm, run_ref="wf-abc")
+
+    assert llm.marks == [
+        ("floorplan-notes", "wf-abc:attempt0"),
+        ("floorplan-notes", "wf-abc:attempt1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_run_ref_is_none_not_an_invented_one() -> None:
+    """取不到运行编号就落 None，AI 判断名照样带。"""
+    payload = {
+        "notes": [
+            {"room": "主卧", "text": "早上先亮起来的是这间", "cites": ["plan-daylight-主卧"]},
+            {"room": "阳台", "text": "阳台又长又窄", "cites": ["plan-shape-阳台"]},
+            {"room": "玄关", "text": "玄关不大够放鞋柜", "cites": ["plan-share-玄关"]},
+        ]
+    }
+    llm = _FakeLlm(payload)
+    await write_notes(_FACTS, _ROOMS, llm)
+    assert llm.marks == [("floorplan-notes", None)]

@@ -25,6 +25,9 @@ from genpipe_worker.models import PlanFact, PlanNote
 NOTES_MODEL = "floorplan-notes.default"
 """任务级逻辑模型名。物理映射唯一落点是 infra 的网关配置，换模型改配置不改代码。"""
 
+CALL_POINT = "floorplan-notes"
+"""这一处 AI 判断在调用记录里的名字（判官台的基本信息表定的，照抄不改）。"""
+
 MAX_NOTES = 6
 """一张图上最多挂几条。多了图就成了分析表——第一阶段要的是"有获得感"，不是"信息量大"。"""
 
@@ -55,10 +58,20 @@ _SYSTEM_PROMPT = """\
 
 
 class TextCompletion(Protocol):
-    """纯文本补全协议位（实现见 llm_client；测试用桩件）。"""
+    """纯文本补全协议位（实现见 llm_client；测试用桩件）。
+
+    `call_point` 必填、`run_ref` 可空，口径同 `models.VisionReader`。
+    """
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str: ...
 
 
@@ -148,15 +161,26 @@ async def write_notes(
     model: str = NOTES_MODEL,
     *,
     max_rewrites: int = MAX_NOTES_REWRITES,
+    run_ref: str | None = None,
 ) -> tuple[list[PlanNote], list[str]]:
     """产一批批注并过机检。返回（留下的, 打回原因）。留下的不够就带上一稿与原因重写，
-    轮数耗尽仍不够即响亮失败。"""
+    轮数耗尽仍不够即响亮失败。
+
+    `run_ref` 再拼上第几稿（`<这次运行>:attempt<轮次>`）：重写是同一跑里的第二次调用，
+    不拼轮次的话两条记录看着一样，而"第一稿为什么被打回"恰恰要按稿次翻。取不到就是 None。
+    """
     if not facts:
         raise PlanNotesError(["事实清单是空的：没有可引的东西，句子必然是编的"])
     user_prompt = build_user_prompt(facts, room_names)
     problems: list[str] = []
-    for _attempt in range(max(max_rewrites, 0) + 1):
-        raw = await client.complete_text(model, _SYSTEM_PROMPT, user_prompt)
+    for attempt in range(max(max_rewrites, 0) + 1):
+        raw = await client.complete_text(
+            model,
+            _SYSTEM_PROMPT,
+            user_prompt,
+            call_point=CALL_POINT,
+            run_ref=f"{run_ref}:attempt{attempt}" if run_ref else None,
+        )
         try:
             kept, rejected = check_notes(_parse(raw), facts, room_names)
         except PlanNotesError as e:

@@ -18,11 +18,20 @@ class _FakeLlm:
     def __init__(self, payload: object) -> None:
         self.payload = payload
         self.prompts: list[str] = []
+        self.marks: list[tuple[str, str | None]] = []
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str:
         self.prompts.append(user_prompt)
+        self.marks.append((call_point, run_ref))
         return json.dumps(self.payload, ensure_ascii=False)
 
 
@@ -96,11 +105,20 @@ class _SequencedLlm:
     def __init__(self, payloads: list[object]) -> None:
         self.payloads = list(payloads)
         self.prompts: list[str] = []
+        self.marks: list[tuple[str, str | None]] = []
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str:
         self.prompts.append(user_prompt)
+        self.marks.append((call_point, run_ref))
         return json.dumps(self.payloads.pop(0), ensure_ascii=False)
 
 
@@ -117,6 +135,28 @@ async def test_rejected_draft_is_rewritten_with_reasons_then_accepted() -> None:
     assert "上一稿被打回的原因" in llm.prompts[1]
     assert "贴士一超过 22 字" in llm.prompts[1]
     assert "阳台和飘窗虽小" in llm.prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_each_draft_names_itself_and_which_draft_it_is() -> None:
+    """两稿都报同一个 AI 判断名，运行编号再拼稿次。"""
+    too_long = _copy(tips=["阳台和飘窗虽小，但细长形状适合种绿植或摆小桌椅", *_TIPS[1:]])
+    llm = _SequencedLlm([too_long.model_dump(), _copy().model_dump()])
+
+    await write_copy(_FACTS, llm, run_ref="wf-abc")
+
+    assert llm.marks == [
+        ("floorplan-copy", "wf-abc:attempt0"),
+        ("floorplan-copy", "wf-abc:attempt1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_run_ref_is_none_not_an_invented_one() -> None:
+    """取不到运行编号就落 None，AI 判断名照样带。"""
+    llm = _FakeLlm(_copy().model_dump())
+    await write_copy(_FACTS, llm)
+    assert llm.marks == [("floorplan-copy", None)]
 
 
 @pytest.mark.asyncio

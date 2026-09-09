@@ -111,6 +111,8 @@ class StubVisionReader:
         image_bytes: bytes,
         image_media_type: str,
         *,
+        call_point: str,
+        run_ref: str | None = None,
         temperature: float = 0.0,
     ) -> str:
         self.calls.append(
@@ -120,6 +122,8 @@ class StubVisionReader:
                 "user_prompt": user_prompt,
                 "image_bytes": image_bytes,
                 "image_media_type": image_media_type,
+                "call_point": call_point,
+                "run_ref": run_ref,
             }
         )
         if "勘测员" in system_prompt:
@@ -442,6 +446,34 @@ async def test_read_floorplan_features_happy_path() -> None:
     # 逐块读到的图例与算好的朝向，真的进了判定那一步的提示
     assert LEGEND_TEXT in reader.verdict_prompt
     assert "阳台：窗开在bottom，朝南" in reader.verdict_prompt
+
+
+async def test_three_steps_name_themselves_in_the_call_ledger() -> None:
+    """三步共用一个逻辑模型名，调用记录分得开它们靠的是各自报的 AI 判断名。
+
+    近景那一步还要拼上房间名——一张图它要调 N 次，不拼的话 N 条记录看着一样，
+    而"次卧那次读错了"正是要按房间翻的。
+    """
+    reader = StubVisionReader(
+        '{"verdicts": [{"feature": "west_facing", "holds": false, "evidence": "图上无朝向依据"}]}'
+    )
+    await read_floorplan_features(make_png(), "image/png", reader, run_ref="wf-abc")
+
+    marks = [(call["call_point"], call["run_ref"]) for call in reader.calls]
+    assert ("floorplan-survey", "wf-abc") in marks
+    assert ("floorplan-verdict", "wf-abc") in marks
+    assert sorted(m for m in marks if m[0] == "floorplan-region") == [
+        ("floorplan-region", "wf-abc:厨房"),
+        ("floorplan-region", "wf-abc:阳台"),
+    ]
+
+
+async def test_no_run_ref_is_none_not_an_invented_one() -> None:
+    """取不到运行编号（CLI 跑没有 workflow）就落 None——不编一个，AI 判断名照样带。"""
+    reader = StubVisionReader('{"verdicts": []}')
+    await read_floorplan_features(make_png(), "image/png", reader)
+    assert {call["run_ref"] for call in reader.calls} == {None}
+    assert all(call["call_point"] for call in reader.calls)
 
 
 async def test_all_verdicts_negative_is_a_normal_result() -> None:

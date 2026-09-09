@@ -38,7 +38,7 @@ import httpx
 from pydantic import ValidationError
 from temporalio import activity
 
-from genpipe_worker.activity_log import logged_activity
+from genpipe_worker.activity_log import current_run_ref, logged_activity
 from genpipe_worker.floorplan_copy import PlanCopyError, write_copy
 from genpipe_worker.floorplan_facts import derive_facts
 from genpipe_worker.floorplan_geometry import FloorplanGeometryError, extract_geometry
@@ -158,7 +158,9 @@ class FloorplanActivities:
 
         started_at = time.monotonic()
         try:
-            reading = await read_floorplan_features(image_bytes, media_type, self._llm)
+            reading = await read_floorplan_features(
+                image_bytes, media_type, self._llm, run_ref=current_run_ref()
+            )
         except LayoutFeatureViolation as e:
             # 硬门禁：标记名越界或产物不合契约——报出是哪个键，不修剪不降级
             return _violations("layout-feature-violation", e.details)
@@ -206,7 +208,13 @@ class FloorplanActivities:
         floorplan_object_key, image_bytes, media_type = loaded
 
         try:
-            survey = await survey_floorplan(image_bytes, media_type, self._llm, PARSE_LOGICAL_MODEL)
+            survey = await survey_floorplan(
+                image_bytes,
+                media_type,
+                self._llm,
+                PARSE_LOGICAL_MODEL,
+                run_ref=current_run_ref(),
+            )
         except FloorplanSurveyError as e:
             return _failed("floorplan-survey-failed", str(e))
         try:
@@ -260,7 +268,9 @@ class FloorplanActivities:
             return _failed("gate-bad-facts", f"事实清单解析失败：{e}")
         room_names = [str(name) for name in request.get("room_names") or []]
         try:
-            kept, rejected = await write_notes(facts, room_names, self._llm)
+            kept, rejected = await write_notes(
+                facts, room_names, self._llm, run_ref=current_run_ref()
+            )
         except PlanNotesError as e:
             return _violations("plan-notes-failed", e.details)
         return {
@@ -278,7 +288,7 @@ class FloorplanActivities:
         except (ValidationError, TypeError) as e:
             return _failed("gate-bad-facts", f"事实清单解析失败：{e}")
         try:
-            copy = await write_copy(facts, self._llm)
+            copy = await write_copy(facts, self._llm, run_ref=current_run_ref())
         except PlanCopyError as e:
             return _violations("plan-copy-failed", e.details)
         return {"verdict": "ok", "copy": copy.model_dump(by_alias=True)}

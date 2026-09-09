@@ -20,6 +20,9 @@ from pydantic import ValidationError
 
 from genpipe_worker.models import RoomLegend, RoomRegion, VisionReader
 
+CALL_POINT = "floorplan-region"
+"""这一处 AI 判断在调用记录里的名字（判官台的基本信息表定的，照抄不改）。"""
+
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
 
@@ -143,12 +146,16 @@ async def read_room_legends(
     logical_model: str,
     *,
     max_concurrency: int = 4,
+    run_ref: str | None = None,
 ) -> list[RoomLegend]:
     """逐房间裁剪放大并读图例与窗墙。
 
     并发有上限——网关那头是按次计费的外部服务，别一次全推过去。
     **窗开在哪面墙在这里定，不在整图勘测里定**：同一张图里，整图勘测把次卧的飘窗报成右墙
     （实为下墙）、给没有窗的卫生间报了一面西窗，而近景两处都读对了。
+
+    `run_ref` 再拼上房间名（`<这次运行>:<房间>`）：这一步一张图要调 N 次，只记运行编号的话
+    N 条记录长得一模一样，看不出哪条读的是哪间——而"次卧那次读错了"正是要按房间翻的。
     """
     semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -161,6 +168,8 @@ async def read_room_legends(
                 _ROOM_USER_PROMPT.format(room=region.name),
                 crop,
                 "image/png",
+                call_point=CALL_POINT,
+                run_ref=f"{run_ref}:{region.name}" if run_ref else None,
             )
         return parse_room_legend(region.name, legend)
 

@@ -33,6 +33,21 @@ _TIMEOUT_SECONDS = 180.0
 """视觉模型读一张印刷级户型图明显慢于文本补全，超时按分钟级给。"""
 
 
+def _call_marks(call_point: str, run_ref: str | None) -> dict[str, Any]:
+    """请求体里那两个标记：这次调用是哪一处 AI 判断（`call_point`）、属于哪次运行（`run_ref`）。
+
+    键名与形状由网关那侧的调用记录定（infra 的 `custom/ledger_callback.py` 从
+    `metadata` 里认这两个键），本模块照抄不另起名字——网关只看得见逻辑模型名，
+    而 `floorplan-parse.default` 一个名字被勘测 / 近景 / 判定三步共用，没有这两样
+    就分不开是哪一步，也串不回同一张图的那一跑。
+
+    `call_point` 在两个调用方法上都是**必填**：漏传的地方要在类型检查与测试里当场露出来，
+    给个默认值等于让漏掉的调用悄悄记成 `unregistered`。`run_ref` 取不到就是 None
+    （CLI 跑没有 workflow），不编一个。
+    """
+    return {"metadata": {"call_point": call_point, "run_ref": run_ref}}
+
+
 class LlmGatewayError(Exception):
     """网关调用失败：**带上网关返回的正文**再抛。
 
@@ -75,7 +90,14 @@ class LiteLlmVisionClient:
         return self._client
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str:
         """纯文本补全。**不读图的那一步就别把图递进去**——户型批注读的是算好的事实清单，
         递图等于给模型第二个可以照着编的来源，而事实这一层的整个用处就是让它只有一个来源。"""
@@ -87,6 +109,7 @@ class LiteLlmVisionClient:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                **_call_marks(call_point, run_ref),
             }
         )
 
@@ -98,6 +121,8 @@ class LiteLlmVisionClient:
         image_bytes: bytes,
         image_media_type: str,
         *,
+        call_point: str,
+        run_ref: str | None = None,
         temperature: float = 0.0,
     ) -> str:
         """送出「系统提示 + 用户提示 + 一张图」，返回首个 choice 的文本内容。
@@ -120,6 +145,7 @@ class LiteLlmVisionClient:
                     ],
                 },
             ],
+            **_call_marks(call_point, run_ref),
         }
         return await self._complete(payload)
 

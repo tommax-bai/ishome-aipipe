@@ -54,6 +54,14 @@ from genpipe_worker.orientation import to_room_orientations
 PARSE_LOGICAL_MODEL = "floorplan-parse.default"
 """任务级逻辑模型名（变化轴 3）：物理 model_id 映射在 infra 的 LiteLLM 配置，换模型不改代码。"""
 
+CALL_POINT = "floorplan-verdict"
+"""这一处 AI 判断在调用记录里的名字（判官台的基本信息表定的，照抄不改）。
+
+**判定这一步只指本文件那次调用**：同一个函数里还串了勘测与近景两处，它们各自报自己的名字
+（`floorplan_survey.CALL_POINT` / `floorplan_regions.CALL_POINT`）——三步共用逻辑模型名
+`floorplan-parse.default`，调用记录分得开它们靠的正是这三个名字。
+"""
+
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
 
@@ -210,6 +218,7 @@ async def read_floorplan_features(
     *,
     logical_model: str = PARSE_LOGICAL_MODEL,
     closed_set: Mapping[str, str] | None = None,
+    run_ref: str | None = None,
 ) -> FloorplanReading:
     """读一张户型图：**勘测 → 裁剪放大逐块读 → 换算朝向 → 逐条判定 → 名字校验 → 投影 → 产物校验**。
 
@@ -226,13 +235,20 @@ async def read_floorplan_features(
 
     **代价**：一张图从 1 次调用变成 1 + N + 1 次（N＝房间数），`model_call_count` 记下实数。
 
+    `run_ref` 是这次运行的编号（activity 里跑就是 workflow id），三步各自带着它进调用记录，
+    事后才串得回"这 1 + N + 1 次是同一张图的同一跑"；只往下透传，不参与任何判断。
+
     名字校验在**投影之前**，覆盖 `holds` 真假两种——判不成立的越界名同样是编造标记名。
     校验不过就抛（`LayoutFeatureViolation`）——**不修剪、不丢弃、不降级**：静默剔掉越界键
     等于把"解析侧在编造标记"藏起来，而下游拿到的是剔完的结果，问题永远浮不出来。
     """
     features_closed_set = dict(closed_set) if closed_set is not None else load_closed_set()
-    survey = await survey_floorplan(image_bytes, image_media_type, reader, logical_model)
-    room_legends = await read_room_legends(image_bytes, survey.rooms, reader, logical_model)
+    survey = await survey_floorplan(
+        image_bytes, image_media_type, reader, logical_model, run_ref=run_ref
+    )
+    room_legends = await read_room_legends(
+        image_bytes, survey.rooms, reader, logical_model, run_ref=run_ref
+    )
     orientations = to_room_orientations(survey.north_points_to, room_legends)
     raw = await reader.complete_with_image(
         logical_model,
@@ -240,6 +256,8 @@ async def read_floorplan_features(
         build_user_prompt(features_closed_set, room_legends, orientations),
         image_bytes,
         image_media_type,
+        call_point=CALL_POINT,
+        run_ref=run_ref,
     )
     verdicts = parse_model_output(raw)
     check_feature_names((v.feature for v in verdicts.verdicts), features_closed_set)

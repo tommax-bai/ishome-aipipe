@@ -110,6 +110,21 @@ def _context(fallback: str) -> str:
     )
 
 
+def current_run_ref() -> str | None:
+    """这一跑的运行编号：Temporal 的 workflow id，不在 activity 上下文里就是 None。
+
+    给网关那侧的调用记录用（请求体 `metadata.run_ref`）——网关只看得见逻辑模型名，
+    一次生成里解析一张图要调十来次，串得回"这些是同一跑"靠的就是它。
+
+    **不新造标识**：workflow id 是编排本来就有的那一个，与上面 `_context` 打进日志的
+    `workflow=` 是同一个值，日志与调用记录对得上。取不到就是 None，不编一个——
+    CLI 与单测直接调实现件时没有 workflow，那时"没有运行编号"是事实。
+    """
+    if not activity.in_activity():
+        return None
+    return activity.info().workflow_id
+
+
 def _one_line(text: object) -> str:
     """压成一行：换行与连续空白都并成一个空格。
 

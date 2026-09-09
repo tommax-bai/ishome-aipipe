@@ -24,6 +24,9 @@ from genpipe_worker.models import PlanCopy, PlanFact
 COPY_MODEL = "floorplan-copy.default"
 """任务级逻辑模型名。与批注那一步分开：批注要引得到事实，文案不要求，两步的判据不同。"""
 
+CALL_POINT = "floorplan-copy"
+"""这一处 AI 判断在调用记录里的名字（判官台的基本信息表定的，照抄不改）。"""
+
 TIP_COUNT = 3
 MAX_TITLE_CHARS = 12
 MAX_SUMMARY_CHARS = 40
@@ -63,10 +66,19 @@ _SYSTEM_PROMPT = f"""\
 class TextCompletion(Protocol):
     """纯文本补全协议位。**与批注那一步各持一份，不共用**——两步同层互不可见是刻意的：
     它们的判据不同（那边要引得到事实，这边不要求），共用一个位置会让"改一处顺手改两处"变得容易。
-    同"出站边缘各自持有是既定分层，不是重复"。"""
+    同"出站边缘各自持有是既定分层，不是重复"。
+
+    `call_point` 必填、`run_ref` 可空，口径同 `models.VisionReader`。"""
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str: ...
 
 
@@ -126,15 +138,25 @@ async def write_copy(
     model: str = COPY_MODEL,
     *,
     max_rewrites: int = MAX_COPY_REWRITES,
+    run_ref: str | None = None,
 ) -> PlanCopy:
     """产一份页面文案并过机检；不合格带上一稿与原因重写，轮数耗尽仍不合格即响亮失败——
-    版面上空着一块比说错更显眼。"""
+    版面上空着一块比说错更显眼。
+
+    `run_ref` 再拼上第几稿（`<这次运行>:attempt<轮次>`），口径同批注那一步。取不到就是 None。
+    """
     if not facts:
         raise PlanCopyError(["事实清单是空的：不给素材的'直接推导'就是编"])
     user_prompt = build_user_prompt(facts)
     problems: list[str] = []
-    for _attempt in range(max(max_rewrites, 0) + 1):
-        raw = await client.complete_text(model, _SYSTEM_PROMPT, user_prompt)
+    for attempt in range(max(max_rewrites, 0) + 1):
+        raw = await client.complete_text(
+            model,
+            _SYSTEM_PROMPT,
+            user_prompt,
+            call_point=CALL_POINT,
+            run_ref=f"{run_ref}:attempt{attempt}" if run_ref else None,
+        )
         text = raw.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].removesuffix("```").strip()

@@ -21,9 +21,11 @@ from genpipe_worker.activities import (
     image_media_type_of,
     reading_archive,
 )
+from genpipe_worker.activity_log import current_run_ref
 from genpipe_worker.models import FloorplanFeatures, FloorplanReading, FloorplanSurvey, RoomRegion
 from genpipe_worker.object_store import GEOMETRY_ARTIFACT, READING_ARTIFACT, ObjectStoreError
 from PIL import Image, ImageDraw
+from temporalio.testing import ActivityEnvironment
 
 _PLAN_LEFT_PX, _PLAN_TOP_PX, _PLAN_RIGHT_PX, _PLAN_BOTTOM_PX = 80, 80, 520, 520
 _PARTITION_X_PX = 300
@@ -84,6 +86,7 @@ class _FakeLlm:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.marks: list[tuple[str, str | None]] = []
 
     async def complete_with_image(
         self,
@@ -93,15 +96,26 @@ class _FakeLlm:
         image_bytes: bytes,
         image_media_type: str,
         *,
+        call_point: str,
+        run_ref: str | None = None,
         temperature: float = 0.0,
     ) -> str:
         self.calls.append(f"image:{model}")
+        self.marks.append((call_point, run_ref))
         return json.dumps(_SURVEY, ensure_ascii=False)
 
     async def complete_text(
-        self, model: str, system_prompt: str, user_prompt: str, *, temperature: float = 0.0
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        call_point: str,
+        run_ref: str | None = None,
+        temperature: float = 0.0,
     ) -> str:
         self.calls.append(f"text:{model}")
+        self.marks.append((call_point, run_ref))
         if "notes" in model:
             ids = re.findall(r"^- (plan-[^：]+)：", user_prompt, flags=re.MULTILINE)
             rooms = re.search(r"房间清单：(.+)", user_prompt)
@@ -219,6 +233,32 @@ async def test_notes_and_copy_take_facts_and_return_checked_products() -> None:
     assert copy["verdict"] == "ok", copy
     assert copy["copy"]["title"] == "光照进来的家"
     assert len(copy["copy"]["tips"]) == 3
+
+
+async def test_each_activity_tells_the_gateway_which_ai_judgement_it_is() -> None:
+    """四个 activity 各自把自己那处 AI 判断的名字带进请求——网关只看得见逻辑模型名，
+    `floorplan-parse.default` 一个名字被勘测 / 近景 / 判定三步共用，分得开靠的就是这个。"""
+    llm = _FakeLlm()
+    impl = _activities(llm=llm)
+    geometry = await impl.extract_floorplan_geometry({"floorplan_object_key": _KEY})
+    await impl.write_plan_notes({"facts": geometry["facts"], "room_names": geometry["room_names"]})
+    await impl.write_plan_copy({"facts": geometry["facts"]})
+
+    assert [call_point for call_point, _ in llm.marks] == [
+        "floorplan-survey",
+        "floorplan-notes",
+        "floorplan-copy",
+    ]
+    # 单测直接调实现件，没有 Temporal 上下文＝没有运行编号：落 None，不编一个
+    assert {run_ref for _, run_ref in llm.marks} == {None}
+
+
+async def test_run_ref_is_the_workflow_id_when_running_inside_temporal() -> None:
+    """运行编号取自 Temporal 的 workflow id（编排本来就有的那一个，不新造标识）；
+    不在 activity 上下文里就是 None——留痕不该成为"这段代码只能在 Temporal 里跑"的理由。"""
+    assert current_run_ref() is None
+    env = ActivityEnvironment()
+    assert env.run(current_run_ref) == env.info.workflow_id
 
 
 async def test_notes_reject_malformed_facts_before_calling_the_model() -> None:

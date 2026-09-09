@@ -52,6 +52,11 @@ class VisionReader(Protocol):
 
     放在类型层而不是某个消费方模块里，是因为解析的三步（勘测 / 逐块读图例 / 判定）
     都要用它，而它们互不可见——端口下沉到共同的底层，避免为共用一个协议开横向依赖。
+
+    `call_point`（这是哪一处 AI 判断）**必填、不给默认值**：三步共用一个逻辑模型名
+    `floorplan-parse.default`，网关那侧的调用记录只靠这个标记才分得开是哪一步；
+    有默认值的话，漏传的调用会静静记到 `unregistered` 名下而没人发现。
+    `run_ref`（哪次运行）取不到就是 None——CLI 跑没有 workflow，不编一个。
     """
 
     async def complete_with_image(
@@ -62,6 +67,8 @@ class VisionReader(Protocol):
         image_bytes: bytes,
         image_media_type: str,
         *,
+        call_point: str,
+        run_ref: str | None = None,
         temperature: float = 0.0,
     ) -> str: ...
 
