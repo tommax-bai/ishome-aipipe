@@ -832,9 +832,7 @@ def _pacing_seconds(previous_text: str) -> float:
     )
 
 
-def _turn_run_ref(
-    conversation: ConversationRef, inbound: message_pb2.UnifiedMessage
-) -> str | None:
+def _turn_run_ref(conversation: ConversationRef, inbound: message_pb2.UnifiedMessage) -> str | None:
     """这一轮的运行编号：会话键 + 本轮入站消息 id，给网关那侧的调用记录用。
 
     **两样都是现成的**：会话键是 `svc_chat.conversations` 的自然键，入站消息 id 是渠道给的、
